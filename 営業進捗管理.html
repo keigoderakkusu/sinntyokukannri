@@ -470,7 +470,7 @@ const state = {
   logs:[],
   selectedMachine:'D59B',
   flowMachine:MACHINES[0].id,
-  config:{linkageUrl:''},
+  config:{linkageUrl:'', notifyEmail:'', notifyThreshold:50, appUrl:''},
   linkageData:null,
 };
 
@@ -518,15 +518,17 @@ function tdDate(d,mId,fKey){
   return`<td class="mono center inline-editable" style="${style}" ${dblAttr}>${fmtD(d)} ${nearBadge(d)}</td>`;
 }
 
-function saveToGAS(){
+function saveToGAS(alertDesc){
   if(typeof google!=='undefined'&&google.script){
-    google.script.run.saveData(JSON.stringify({
-      statuses:state.statuses,
-      schedules:state.schedules,
-      notes:state.notes,
-      eco:state.eco,
-      config:state.config,
-    }));
+    const json=JSON.stringify({
+      statuses:state.statuses,schedules:state.schedules,
+      notes:state.notes,eco:state.eco,config:state.config,
+    });
+    google.script.run.saveData(json);
+    // アラートメール送信（変更内容がある場合 or 設定で常時通知）
+    if(alertDesc && state.config.notifyEmail){
+      google.script.run.sendAlertEmail(json, alertDesc);
+    }
   }
 }
 
@@ -757,6 +759,54 @@ function applyExcelUpdates(updates){
 /* ============================================================
    見積管理 LINKAGE
 ============================================================ */
+/* ============================================================
+   EMAIL NOTIFICATION SETTINGS
+============================================================ */
+function saveNotifySettings(){
+  const email=document.getElementById('notify-email-input')?.value?.trim()||'';
+  const threshold=parseInt(document.getElementById('notify-threshold-input')?.value)||50;
+  const appUrl=document.getElementById('notify-appurl-input')?.value?.trim()||'';
+  state.config.notifyEmail=email;
+  state.config.notifyThreshold=threshold;
+  state.config.appUrl=appUrl;
+  saveToGAS();
+  // Update badge
+  const badge=document.getElementById('notify-status-badge');
+  if(badge){
+    badge.textContent=email?`✅ ${email}`:'⚠️ 未設定';
+    badge.style.color=email?'var(--success)':'var(--warning)';
+  }
+  showToast(email?`✅ 通知先: ${email}`:'⚠️ メールアドレスを入力してください');
+}
+
+function sendTestEmail(){
+  const email=document.getElementById('notify-email-input')?.value?.trim()||state.config.notifyEmail;
+  if(!email){showToast('⚠️ メールアドレスを入力してください');return;}
+  if(typeof google==='undefined'||!google.script){
+    showToast('⚠️ GAS上でのみ動作します');return;
+  }
+  // 一時的にメールアドレスを設定してテスト送信
+  const saved=state.config.notifyEmail;
+  state.config.notifyEmail=email;
+  const json=JSON.stringify({statuses:state.statuses,schedules:state.schedules,notes:state.notes,eco:state.eco,config:state.config});
+  google.script.run
+    .withSuccessHandler(()=>showToast(`✅ テストメールを ${email} に送信しました`))
+    .withFailureHandler(err=>showToast('⚠️ 送信失敗: '+err.message))
+    .sendAlertEmail(json,'テスト送信');
+  state.config.notifyEmail=saved;
+}
+
+function setupDailyTrigger(){
+  if(typeof google==='undefined'||!google.script){
+    showToast('⚠️ GAS上でのみ動作します');return;
+  }
+  if(!state.config.notifyEmail){showToast('⚠️ 先にメールアドレスを保存してください');return;}
+  google.script.run
+    .withSuccessHandler(()=>showToast('✅ 毎日8時のトリガーを設定しました'))
+    .withFailureHandler(err=>showToast('⚠️ '+err.message))
+    .setupDailyTrigger();
+}
+
 function saveLinkageUrl(){
   const url=document.getElementById('linkage-url-input')?.value?.trim()||'';
   state.config.linkageUrl=url;
@@ -1007,7 +1057,7 @@ function saveEditModal(){
   addLog(`${id} 情報更新`);
   closeEditModal();
   showToast(`✅ ${id} を更新しました`);
-  saveToGAS();
+  saveToGAS(`${id} スケジュール更新`);
   renderPage(currentPage);
 }
 
@@ -1095,7 +1145,8 @@ function saveEcoModal(){
   addLog(`エコ [${machine}] ${stg.label}: ${val}台`);
   closeEcoModal();
   showToast(`✅ ${machine} / ${stg.label}: ${val}台`);
-  renderPage('eco');updateEcoBadge();saveToGAS();
+  renderPage('eco');updateEcoBadge();
+  saveToGAS(`エコ [${machine}] ${stg.label}: ${val}台`);
 }
 
 /* ============================================================
@@ -1132,7 +1183,8 @@ function execMove(){
   addLog(`エコ [${machine}] ${fl}→${tl}: ${actual}台`);
   closeMoveModal();
   showToast(`✅ ${actual}台 移動`);
-  renderPage('eco');updateEcoBadge();saveToGAS();
+  renderPage('eco');updateEcoBadge();
+  saveToGAS(`エコ [${machine}] ${fl}→${tl}: ${actual}台移動`);
 }
 
 /* ============================================================
@@ -1480,6 +1532,41 @@ function renderAdmin(){
           <span style="font-size:11px;color:var(--text-muted);">営業情報.xlsx を選択 → 機種データを自動検出して反映</span>
         </div>
         <div id="excel-preview" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+    <!-- メール通知設定 -->
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <h3>📧 メール通知設定</h3>
+        <span id="notify-status-badge" style="font-size:11px;"></span>
+      </div>
+      <div class="admin-section-body">
+        <div class="form-row" style="margin-bottom:12px;">
+          <div class="form-field">
+            <label>通知先メールアドレス</label>
+            <input type="email" id="notify-email-input" placeholder="your@email.com"
+              value="${state.config.notifyEmail||''}">
+          </div>
+          <div class="form-field">
+            <label>エコ滞留警告 しきい値（台）</label>
+            <input type="number" id="notify-threshold-input" min="1" value="${state.config.notifyThreshold||50}">
+          </div>
+        </div>
+        <div class="form-field" style="margin-bottom:12px;">
+          <label>システム URL（メール内リンク用）</label>
+          <input type="text" id="notify-appurl-input" placeholder="https://script.google.com/macros/s/.../exec"
+            value="${state.config.appUrl||''}">
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+          <button class="btn btn-primary btn-sm" onclick="saveNotifySettings()">💾 設定を保存</button>
+          <button class="btn btn-sm" onclick="sendTestEmail()">📧 テストメール送信</button>
+          <button class="btn btn-sm btn-success" onclick="setupDailyTrigger()">⏰ 毎日8時トリガーを設定</button>
+        </div>
+        <div style="margin-top:12px;" class="alert-bar-info" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;font-size:11px;color:#1e40af;">
+          ℹ️ <strong>「毎日8時トリガーを設定」</strong>を一度クリックすると、GASが毎朝8時にサマリーメールを自動送信します。<br>
+          重要な変更（スケジュール更新・エコ移動）時はリアルタイムでも通知が届きます。
+        </div>
       </div>
     </div>
 
