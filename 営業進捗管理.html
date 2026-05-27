@@ -6,11 +6,6 @@
 <title>営業進捗管理システム</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
 /* ============================================================
    CSS Variables & Reset — 見積管理システムと共通デザイン
@@ -281,7 +276,7 @@ select:focus{border-color:var(--primary);}
 </head>
 <body>
 <div id="app-shell">
-  <nav id="sidebar" id-sidebar>
+  <nav id="sidebar">
     <button class="sidebar-toggle" id="sidebar-toggle-btn" title="折り畳む">‹</button>
     <div class="sidebar-logo">
       <div class="sidebar-logo-icon">📊</div>
@@ -581,6 +576,8 @@ function closeEditModal(){ document.getElementById('edit-modal').classList.remov
 function saveEditModal(){
   const id = editingId;
   state.statuses[id] = document.getElementById('edit-status').value;
+  const mach = MACHINES.find(m=>m.id===id);
+  if(mach) mach.prodQty = document.getElementById('edit-qty').value;
   state.schedules[id] = {
     sampleImpl: document.getElementById('edit-sampleImpl').value||null,
     sampleAssy: document.getElementById('edit-sampleAssy').value||null,
@@ -594,6 +591,7 @@ function saveEditModal(){
   closeEditModal();
   showToast(`✅ ${id} を更新しました`);
   renderPage(currentPage);
+  saveToGAS();
 }
 
 /* ── Eco modal ── */
@@ -619,6 +617,7 @@ function saveEcoModal(){
   showToast(`✅ ${machine} / ${stg.label}: ${val}台`);
   renderPage('eco');
   updateEcoBadge();
+  saveToGAS();
 }
 
 /* ── Move modal ── */
@@ -652,6 +651,18 @@ function execMove(){
   showToast(`✅ ${actual}台 移動完了`);
   renderPage('eco');
   updateEcoBadge();
+  saveToGAS();
+}
+
+function saveToGAS(){
+  if(typeof google!=='undefined'&&google.script){
+    google.script.run.saveData(JSON.stringify({
+      statuses:state.statuses,
+      schedules:state.schedules,
+      notes:state.notes,
+      eco:state.eco,
+    }));
+  }
 }
 
 function updateEcoBadge(){
@@ -1102,8 +1113,27 @@ function renderPage(page){
 }
 
 /* ── Init ── */
-updateEcoBadge();
-renderDashboard();
+function _init(saved){
+  if(saved){
+    try{
+      const s = typeof saved==='string' ? JSON.parse(saved) : saved;
+      if(s.statuses) Object.assign(state.statuses, s.statuses);
+      if(s.schedules) Object.assign(state.schedules, s.schedules);
+      if(s.notes)     Object.assign(state.notes, s.notes);
+      if(s.eco)       Object.assign(state.eco, s.eco);
+    }catch(e){}
+  }
+  updateEcoBadge();
+  renderDashboard();
+}
+if(typeof google!=='undefined'&&google.script){
+  google.script.run
+    .withSuccessHandler(_init)
+    .withFailureHandler(()=>_init(null))
+    .loadData();
+}else{
+  _init(null);
+}
 </script>
 </body>
 </html>
