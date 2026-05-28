@@ -161,16 +161,39 @@ td.editing select,td.editing input{width:100%;padding:5px 8px;border:1px solid v
 .prog-track{flex:1;height:6px;background:#e8eaed;border-radius:3px;overflow:hidden;}
 .prog-fill{height:100%;border-radius:3px;background:var(--primary);}
 
-/* Step flow */
-.step-flow{display:flex;align-items:stretch;gap:0;margin-bottom:20px;}
-.step-item{flex:1;min-width:0;}
-.step-box{border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 8px;text-align:center;background:var(--card);height:100%;}
-.step-box.done{background:#f0fdf4;border-color:#86efac;}
-.step-box.active{background:var(--primary-light);border-color:#93c5fd;box-shadow:0 0 0 2px rgba(37,99,235,.15);}
-.step-label{font-size:10px;font-weight:600;color:var(--text-sub);margin-bottom:4px;}
-.step-date{font-size:12px;font-weight:700;font-family:'IBM Plex Mono',monospace;}
-.step-status{font-size:10px;margin-top:3px;}
+/* Step flow (legacy — kept for compat) */
 .step-sep{display:flex;align-items:center;padding:0 4px;color:var(--text-muted);font-size:16px;flex-shrink:0;}
+
+/* ── Custom flow redesign ── */
+.flow-group-card{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow-sm);border:1px solid var(--border-light);margin-bottom:16px;overflow:visible;}
+.flow-group-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;border-bottom:1px solid var(--border-light);background:#f8fafc;border-radius:var(--radius) var(--radius) 0 0;}
+.flow-group-title{font-size:13px;font-weight:700;display:flex;align-items:center;gap:8px;flex:1;min-width:0;}
+.flow-group-color-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;}
+.flow-group-title-text{cursor:pointer;padding:2px 4px;border-radius:3px;}
+.flow-group-title-text:hover{background:rgba(37,99,235,.08);}
+.flow-steps-container{display:flex;align-items:flex-start;padding:24px 16px 20px;gap:0;overflow-x:auto;min-height:130px;scrollbar-width:thin;}
+.flow-step-wrapper{display:flex;align-items:center;flex-shrink:0;}
+.flow-step-card{width:148px;background:#fff;border:2px solid var(--border);border-radius:var(--radius);padding:12px 10px 10px;position:relative;transition:border-color .15s,box-shadow .15s;cursor:default;margin-top:10px;}
+.flow-step-card:hover{box-shadow:var(--shadow);border-color:#93c5fd;}
+.flow-step-card.step-done{border-color:#86efac;background:#f0fdf4;}
+.flow-step-card.step-near{border-color:#fbbf24;background:#fffbeb;}
+.flow-step-card.step-active{border-color:#93c5fd;background:var(--primary-light);}
+.flow-step-num{position:absolute;top:-10px;left:10px;width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;background:var(--primary);box-shadow:0 1px 4px rgba(0,0,0,.2);}
+.flow-step-card.step-done .flow-step-num{background:var(--success);}
+.flow-step-card.step-near .flow-step-num{background:var(--warning);}
+.flow-step-icon{position:absolute;top:8px;right:8px;font-size:14px;line-height:1;}
+.flow-step-label{font-size:12px;font-weight:600;color:var(--text);margin-top:6px;margin-bottom:5px;line-height:1.4;cursor:pointer;padding:1px 3px;border-radius:3px;}
+.flow-step-label:hover{background:rgba(37,99,235,.08);color:var(--primary);}
+.flow-step-date{font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--text-sub);cursor:pointer;padding:2px 4px;border-radius:3px;display:inline-block;}
+.flow-step-date:hover{background:rgba(37,99,235,.08);color:var(--primary);}
+.flow-step-diff{font-size:10px;margin-top:3px;font-weight:600;}
+.flow-step-del{position:absolute;top:5px;left:50%;transform:translateX(-50%);font-size:9px;color:var(--text-muted);cursor:pointer;background:var(--bg);border:1px solid var(--border);border-radius:3px;padding:1px 5px;opacity:0;transition:opacity .15s;white-space:nowrap;z-index:5;}
+.flow-step-card:hover .flow-step-del{opacity:1;}
+.flow-step-del:hover{color:var(--danger);border-color:var(--danger);background:#fef2f2;}
+.flow-step-connector{padding:0 6px;color:var(--text-muted);font-size:20px;flex-shrink:0;margin-top:10px;user-select:none;}
+.flow-step-add-btn{width:44px;height:44px;border:2px dashed var(--border);border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--text-muted);font-size:22px;flex-shrink:0;transition:all .2s;margin-top:10px;background:transparent;}
+.flow-step-add-btn:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-light);}
+.flow-step-card.flow-drag-over{border-color:var(--primary);background:#dbeafe;transform:scale(1.03);}
 
 /* Gantt */
 .gantt-container{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow-sm);border:1px solid var(--border-light);overflow:hidden;}
@@ -472,6 +495,7 @@ const state = {
   flowMachine:MACHINES[0].id,
   config:{linkageUrl:'', notifyEmail:'', notifyThreshold:50, appUrl:''},
   linkageData:null,
+  customFlows:{}, // { machineId: [{id,label,color,steps:[{id,label,date,done}]}] }
 };
 
 /* ============================================================
@@ -523,9 +547,9 @@ function saveToGAS(alertDesc){
     const json=JSON.stringify({
       statuses:state.statuses,schedules:state.schedules,
       notes:state.notes,eco:state.eco,config:state.config,
+      customFlows:state.customFlows,
     });
     google.script.run.saveData(json);
-    // アラートメール送信（変更内容がある場合 or 設定で常時通知）
     if(alertDesc && state.config.notifyEmail){
       google.script.run.sendAlertEmail(json, alertDesc);
     }
@@ -1423,66 +1447,282 @@ function renderEco(){
 }
 
 /* ============================================================
+   CUSTOM FLOW HELPERS
+============================================================ */
+const FLOW_COLORS=['#2563eb','#7c3aed','#0891b2','#16a34a','#d97706','#dc2626','#db2777'];
+
+function getFlowsForMachine(machineId){
+  if(state.customFlows&&state.customFlows[machineId]){
+    return state.customFlows[machineId];
+  }
+  // Build defaults from schedules
+  const sc=state.schedules[machineId]||{};
+  return [
+    {id:'grp_sample_'+machineId,label:'見本機フロー',color:'#7c3aed',steps:[
+      {id:'sampleImpl',label:'基板実装',date:sc.sampleImpl||null,done:!!(sc.sampleImpl&&isPast(sc.sampleImpl))},
+      {id:'sampleAssy',label:'組立',date:sc.sampleAssy||null,done:!!(sc.sampleAssy&&isPast(sc.sampleAssy))},
+      {id:'sampleShip',label:'出荷',date:sc.sampleShip||null,done:!!(sc.sampleShip&&isPast(sc.sampleShip))},
+    ]},
+    {id:'grp_prod_'+machineId,label:'量産フロー',color:'#2563eb',steps:[
+      {id:'prodImpl',label:'基板実装',date:sc.prodImpl||null,done:!!(sc.prodImpl&&isPast(sc.prodImpl))},
+      {id:'prodAssy',label:'組立',date:sc.prodAssy||null,done:!!(sc.prodAssy&&isPast(sc.prodAssy))},
+      {id:'prodShip',label:'出荷',date:sc.prodShip||null,done:!!(sc.prodShip&&isPast(sc.prodShip))},
+    ]},
+  ];
+}
+
+function saveFlowForMachine(machineId,groups){
+  if(!state.customFlows)state.customFlows={};
+  state.customFlows[machineId]=groups;
+  saveToGAS();
+}
+
+let _flowDragSrc=null;
+
+function flowDragStart(e,machineId,groupId,stepIdx){
+  _flowDragSrc={machineId,groupId,stepIdx};
+  e.dataTransfer.effectAllowed='move';
+  e.currentTarget.style.opacity='0.4';
+}
+function flowDragEnd(e){e.currentTarget.style.opacity='';}
+function flowDragOver(e,machineId,groupId,stepIdx){
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  e.currentTarget.classList.add('flow-drag-over');
+}
+function flowDragLeave(e){e.currentTarget.classList.remove('flow-drag-over');}
+function flowDrop(e,machineId,groupId,stepIdx){
+  e.preventDefault();
+  e.currentTarget.classList.remove('flow-drag-over');
+  if(!_flowDragSrc)return;
+  if(_flowDragSrc.machineId!==machineId||_flowDragSrc.groupId!==groupId)return;
+  if(_flowDragSrc.stepIdx===stepIdx){_flowDragSrc=null;return;}
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp){_flowDragSrc=null;return;}
+  const [moved]=grp.steps.splice(_flowDragSrc.stepIdx,1);
+  grp.steps.splice(stepIdx,0,moved);
+  _flowDragSrc=null;
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+function addFlowStep(machineId,groupId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  const newId='step_'+Date.now();
+  grp.steps.push({id:newId,label:'工程 '+(grp.steps.length+1),date:null,done:false});
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+  // auto-focus the new step label
+  setTimeout(()=>{
+    const el=document.getElementById('flabel_'+newId);
+    if(el)el.click();
+  },50);
+}
+
+function deleteFlowStep(machineId,groupId,stepId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  if(grp.steps.length<=1){showToast('最後のステップは削除できません');return;}
+  grp.steps=grp.steps.filter(s=>s.id!==stepId);
+  saveFlowForMachine(machineId,groups);
+  addLog(machineId+' フローステップ削除');
+  renderPage('flow');
+}
+
+function addFlowGroup(machineId){
+  const groups=getFlowsForMachine(machineId);
+  const color=FLOW_COLORS[groups.length%FLOW_COLORS.length];
+  const newGrp={id:'grp_'+Date.now(),label:'フロー '+(groups.length+1),color,steps:[
+    {id:'step_'+Date.now(),label:'工程 1',date:null,done:false}
+  ]};
+  groups.push(newGrp);
+  saveFlowForMachine(machineId,groups);
+  addLog(machineId+' 新規フロー追加');
+  renderPage('flow');
+}
+
+function deleteFlowGroup(machineId,groupId){
+  const groups=getFlowsForMachine(machineId);
+  if(groups.length<=1){showToast('最後のフローは削除できません');return;}
+  const idx=groups.findIndex(g=>g.id===groupId);
+  if(idx>=0)groups.splice(idx,1);
+  saveFlowForMachine(machineId,groups);
+  addLog(machineId+' フロー削除');
+  renderPage('flow');
+}
+
+function startEditFlowGroupLabel(e,machineId,groupId){
+  e.stopPropagation();
+  const span=e.currentTarget;
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  const input=document.createElement('input');
+  input.type='text';input.value=grp.label;
+  input.style.cssText='font-size:13px;font-weight:700;border:1px solid var(--primary);border-radius:4px;padding:2px 8px;width:180px;outline:none;background:#fff;';
+  span.replaceWith(input);input.focus();input.select();
+  const commit=()=>{grp.label=input.value.trim()||grp.label;saveFlowForMachine(machineId,groups);renderPage('flow');};
+  input.addEventListener('blur',commit);
+  input.addEventListener('keydown',ev=>{if(ev.key==='Enter')commit();if(ev.key==='Escape')renderPage('flow');});
+}
+
+function startEditFlowStepLabel(e,machineId,groupId,stepId){
+  e.stopPropagation();
+  const span=e.currentTarget;
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  const step=grp.steps.find(s=>s.id===stepId);
+  if(!step)return;
+  const input=document.createElement('input');
+  input.type='text';input.value=step.label;
+  input.style.cssText='font-size:12px;font-weight:600;border:1px solid var(--primary);border-radius:4px;padding:2px 6px;width:100%;outline:none;background:#fff;';
+  span.replaceWith(input);input.focus();input.select();
+  const commit=()=>{step.label=input.value.trim()||step.label;saveFlowForMachine(machineId,groups);renderPage('flow');};
+  input.addEventListener('blur',commit);
+  input.addEventListener('keydown',ev=>{if(ev.key==='Enter')commit();if(ev.key==='Escape')renderPage('flow');});
+}
+
+function startEditFlowStepDate(e,machineId,groupId,stepId){
+  e.stopPropagation();
+  const span=e.currentTarget;
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  const step=grp.steps.find(s=>s.id===stepId);
+  if(!step)return;
+  const input=document.createElement('input');
+  input.type='date';input.value=step.date?fmtDate(step.date):'';
+  input.style.cssText='font-size:11px;border:1px solid var(--primary);border-radius:4px;padding:2px 4px;width:136px;outline:none;background:#fff;';
+  span.replaceWith(input);input.focus();
+  const commit=()=>{
+    step.date=input.value||null;
+    step.done=step.date?isPast(step.date):false;
+    saveFlowForMachine(machineId,groups);
+    renderPage('flow');
+  };
+  input.addEventListener('blur',commit);
+  input.addEventListener('change',commit);
+}
+
+function toggleFlowStepDone(machineId,groupId,stepId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  const step=grp.steps.find(s=>s.id===stepId);
+  if(!step)return;
+  step.done=!step.done;
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+/* ============================================================
    RENDER: FLOW
 ============================================================ */
 function renderFlow(){
   const selId=state.flowMachine||MACHINES[0].id;
   const m=MACHINES.find(x=>x.id===selId);
-  const sc=state.schedules[selId];
   const status=state.statuses[selId];
-
-  const STEPS_SAMPLE=[{key:'sampleImpl',label:'見本機 基板実装'},{key:'sampleAssy',label:'見本機 組立'},{key:'sampleShip',label:'見本機 出荷'}];
-  const STEPS_PROD=[{key:'prodImpl',label:'量産 基板実装'},{key:'prodAssy',label:'量産 組立'},{key:'prodShip',label:'量産 出荷'}];
-
-  function stepHtml(steps){
-    return steps.map((s,i)=>{
-      const d=sc[s.key];
-      const st=isPast(d)?'done':d?'active':'wait';
-      const icon=st==='done'?'✅':st==='active'?'🔄':'⏳';
-      const diff=getDiff(d);
-      const diffLabel=d?(isPast(d)?'完了':'あと'+diff+'日'):'未定';
-      const arr=i>0?`<div class="step-sep">→</div>`:'';
-      return`${arr}<div class="step-item">
-        <div class="step-box ${st}" ondblclick="inlineEditDate(this,'${selId}','${s.key}')" style="cursor:pointer;" title="ダブルクリックで日程編集">
-          <div class="step-label">${icon} ${s.label}</div>
-          <div class="step-date">${fmtD(d)}</div>
-          <div class="step-status">${diffLabel}</div>
-        </div>
-      </div>`;
-    }).join('');
-  }
+  const groups=getFlowsForMachine(selId);
 
   const machineBtnsHtml=MACHINES.map(x=>`
     <button class="btn btn-sm ${x.id===selId?'btn-primary':''}"
       onclick="state.flowMachine='${x.id}';renderPage('flow');">${x.id}</button>`).join('');
 
-  const boardRows=m.boards.map(b=>`
-    <tr><td>${b.type}</td><td class="mono">${b.model}</td><td class="center">${b.qty?b.qty+'台':'—'}</td></tr>`).join('');
+  function stepCardHtml(step,stepIdx,grp){
+    const d=step.date;
+    const done=step.done||isPast(d);
+    const near=!done&&isNear(d);
+    const active=!done&&!near&&d;
+    const statusClass=done?'step-done':near?'step-near':active?'step-active':'';
+    const icon=done?'✅':near?'⚠️':active?'🔄':'⏳';
+    const diff=getDiff(d);
+    const diffLabel=d?(done?'完了':near?'⚠️ あと'+diff+'日':'あと'+diff+'日'):'未設定';
+    const diffColor=done?'var(--success)':near?'var(--warning)':'var(--text-muted)';
+    const connector=stepIdx>0?'<div class="flow-step-connector">→</div>':'';
+    return `${connector}
+      <div class="flow-step-card ${statusClass}"
+        draggable="true"
+        ondragstart="flowDragStart(event,'${selId}','${grp.id}',${stepIdx})"
+        ondragend="flowDragEnd(event)"
+        ondragover="flowDragOver(event,'${selId}','${grp.id}',${stepIdx})"
+        ondragleave="flowDragLeave(event)"
+        ondrop="flowDrop(event,'${selId}','${grp.id}',${stepIdx})">
+        <div class="flow-step-num" style="background:${done?'var(--success)':near?'var(--warning)':grp.color||'var(--primary)'};">${stepIdx+1}</div>
+        <div class="flow-step-icon" title="${done?'完了':'クリックで完了切替'}" onclick="toggleFlowStepDone('${selId}','${grp.id}','${step.id}')" style="cursor:pointer;">${icon}</div>
+        <div class="flow-step-del" onclick="deleteFlowStep('${selId}','${grp.id}','${step.id}')">✕ 削除</div>
+        <div class="flow-step-label" id="flabel_${step.id}"
+          onclick="startEditFlowStepLabel(event,'${selId}','${grp.id}','${step.id}')"
+          title="クリックで編集">${step.label}</div>
+        <div class="flow-step-date"
+          onclick="startEditFlowStepDate(event,'${selId}','${grp.id}','${step.id}')"
+          title="クリックで日付設定">📅 ${fmtD(d)}</div>
+        <div class="flow-step-diff" style="color:${diffColor};">${diffLabel}</div>
+      </div>`;
+  }
+
+  const groupsHtml=groups.map(grp=>{
+    const doneCount=grp.steps.filter(s=>s.done||isPast(s.date)).length;
+    const pct=grp.steps.length>0?Math.round(doneCount/grp.steps.length*100):0;
+    const stepsHtml=grp.steps.map((s,si)=>
+      `<div class="flow-step-wrapper">${stepCardHtml(s,si,grp)}</div>`).join('');
+    return `
+      <div class="flow-group-card">
+        <div class="flow-group-header">
+          <div class="flow-group-title">
+            <div class="flow-group-color-dot" style="background:${grp.color||'var(--primary)'}"></div>
+            <span class="flow-group-title-text"
+              onclick="startEditFlowGroupLabel(event,'${selId}','${grp.id}')"
+              title="クリックで名称変更">${grp.label}</span>
+            <span style="font-size:11px;font-weight:400;color:var(--text-muted);">${doneCount}/${grp.steps.length} 完了</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;">
+            <div class="prog-wrap" style="width:130px;">
+              <div class="prog-track"><div class="prog-fill" style="width:${pct}%;background:${grp.color||'var(--primary)'}"></div></div>
+              <span style="font-size:11px;color:var(--text-sub);min-width:34px;">${pct}%</span>
+            </div>
+            <button class="btn btn-sm btn-danger" onclick="deleteFlowGroup('${selId}','${grp.id}')">削除</button>
+          </div>
+        </div>
+        <div class="flow-steps-container">
+          ${stepsHtml}
+          <div class="flow-step-wrapper">
+            ${grp.steps.length>0?'<div class="flow-step-connector">→</div>':''}
+            <div class="flow-step-add-btn" onclick="addFlowStep('${selId}','${grp.id}')" title="ステップ追加">＋</div>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
 
   document.getElementById('page-flow').innerHTML=`
-    <div class="page-heading"><div><h2>🔄 業務フロー</h2><p>機種別 工程進捗 ／ ステップをダブルクリックで日程編集</p></div></div>
-    <div class="filter-bar">${machineBtnsHtml}</div>
-    <div class="table-wrap">
+    <div class="page-heading">
+      <div><h2>🔄 業務フロー</h2><p>機種ごとにステップをカスタマイズ ／ クリックで編集・ドラッグで並び替え</p></div>
+      <button class="btn btn-primary btn-sm" onclick="addFlowGroup('${selId}')">＋ フロー追加</button>
+    </div>
+    <div class="filter-bar" style="flex-wrap:wrap;gap:6px;">${machineBtnsHtml}</div>
+    <div class="table-wrap" style="margin-bottom:16px;">
       <div class="table-toolbar">
-        <h2>【 ${m.id} 】 ${m.person}担当</h2>
         <div style="display:flex;align-items:center;gap:10px;">
+          <strong style="font-size:14px;">【 ${m.id} 】</strong>
+          <span style="font-size:12px;color:var(--text-sub);">${m.person} 担当</span>
           ${badgeHtml(status)}
           ${m.compliance?`<span class="badge badge-info">${m.compliance}</span>`:''}
-          <span style="font-size:12px;color:var(--text-sub);">量産台数: <strong>${m.prodQty}</strong></span>
-          <button class="btn btn-sm" onclick="openEditModal('${m.id}')">✏️ 編集</button>
+          <span style="font-size:12px;color:var(--text-sub);">量産 <strong>${m.prodQty}</strong> 台</span>
         </div>
+        <button class="btn btn-sm" onclick="openEditModal('${m.id}')">✏️ 機種編集</button>
       </div>
-      <div style="padding:20px;">
-        <div class="detail-section"><h4>見本機フロー</h4><div class="step-flow">${stepHtml(STEPS_SAMPLE)}</div></div>
-        <div class="detail-section"><h4>量産フロー</h4><div class="step-flow">${stepHtml(STEPS_PROD)}</div></div>
-        <div class="detail-section"><h4>使用基板</h4>
-          <table style="width:auto;"><thead><tr><th>種別</th><th>型番</th><th class="center">台数</th></tr></thead><tbody>${boardRows}</tbody></table>
-          <div style="margin-top:8px;font-size:12px;color:var(--text-sub);">ROM種類: ${m.rom||'—'}</div>
-        </div>
-        <div class="detail-section"><h4>備考・メモ</h4>
-          <div style="background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:12px;font-size:13px;line-height:1.8;" contenteditable="true"
+    </div>
+    ${groupsHtml}
+    <div class="table-wrap" style="margin-top:4px;">
+      <div style="padding:16px 20px;">
+        <div class="detail-section" style="margin-bottom:0;"><h4>備考・メモ</h4>
+          <div style="background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:12px;font-size:13px;line-height:1.8;min-height:60px;" contenteditable="true"
             onblur="state.notes['${selId}']=this.textContent.trim();saveToGAS();">
-            ${state.notes[selId]||'<span style="color:var(--text-muted);">（クリックして編集）</span>'}
+            ${state.notes[selId]||'<span style="color:var(--text-muted);">（クリックして入力）</span>'}
           </div>
         </div>
       </div>
@@ -1640,13 +1880,10 @@ function renderPage(page){
 /* ============================================================
    GAS INTEGRATION & INIT
 ============================================================ */
-function saveToGAS(){
-  if(typeof google!=='undefined'&&google.script){
-    google.script.run.saveData(JSON.stringify({
-      statuses:state.statuses,schedules:state.schedules,
-      notes:state.notes,eco:state.eco,config:state.config,
-    }));
-  }
+// Note: main saveToGAS with alertDesc is defined earlier above state
+// This stub keeps backward compat for callers that pass no arg
+function _saveToGASNoAlert(){
+  saveToGAS();
 }
 
 function _init(saved){
@@ -1658,6 +1895,7 @@ function _init(saved){
       if(s.notes)Object.assign(state.notes,s.notes);
       if(s.eco)Object.assign(state.eco,s.eco);
       if(s.config)Object.assign(state.config,s.config);
+      if(s.customFlows)state.customFlows=s.customFlows;
     }catch(e){}
   }
   updateEcoBadge();
