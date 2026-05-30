@@ -271,6 +271,7 @@ select:focus{border-color:var(--primary);}
       <div class="nav-item" data-page="schedule"><span class="nav-item-icon">📅</span><span class="nav-item-label">スケジュール</span></div>
       <div class="nav-item" data-page="eco"><span class="nav-item-icon">♻️</span><span class="nav-item-label">エコフロー</span><span class="nav-badge-wrap"><span class="nav-badge" id="eco-badge">0</span></span></div>
       <div class="nav-item" data-page="flow"><span class="nav-item-icon">🔄</span><span class="nav-item-label">業務フロー</span></div>
+      <div class="nav-item" data-page="future"><span class="nav-item-icon">🔭</span><span class="nav-item-label">将来機種計画</span><span class="nav-badge-wrap"><span class="nav-badge" id="future-badge" style="background:var(--info);">0</span></span></div>
       <div class="sidebar-section-label">管理</div>
       <div class="nav-item" data-page="admin"><span class="nav-item-icon">⚙️</span><span class="nav-item-label">管理コンソール</span></div>
       <div class="nav-item" data-page="log"><span class="nav-item-icon">📝</span><span class="nav-item-label">更新ログ</span></div>
@@ -310,6 +311,41 @@ select:focus{border-color:var(--primary);}
       <div id="page-flow" class="page"></div>
       <div id="page-admin" class="page"></div>
       <div id="page-log" class="page"></div>
+      <div id="page-future" class="page"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 将来機種 モーダル -->
+<div class="modal-overlay" id="future-modal" style="display:none" onclick="if(event.target===this)closeFutureModal()">
+  <div class="modal" style="max-width:560px;">
+    <div class="modal-head"><h3 id="fm-modal-title">将来機種 追加</h3><button class="modal-close" onclick="closeFutureModal()">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="fm-id">
+      <div class="form-row">
+        <div class="form-field"><label>機種コード *</label><input type="text" id="fm-code" placeholder="例: e:A88"></div>
+        <div class="form-field"><label>機種名</label><input type="text" id="fm-name" placeholder="例: 女神のカフェテラス"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>販売予定日</label><input type="date" id="fm-salesDate"></div>
+        <div class="form-field"><label>適合日</label><input type="date" id="fm-complianceDate"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>生産計画日</label><input type="date" id="fm-productionPlanDate"></div>
+        <div class="form-field"><label>材料手配日</label><input type="date" id="fm-materialDate"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>実装手配日</label><input type="date" id="fm-mountingDate"></div>
+        <div class="form-field"><label>納入日</label><input type="date" id="fm-deliveryDate"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-field"><label>ホール導入日</label><input type="date" id="fm-hallDate"></div>
+        <div class="form-field"><label>備考</label><input type="text" id="fm-memo" placeholder="メモ"></div>
+      </div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="closeFutureModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveFutureModal()">保存</button>
     </div>
   </div>
 </div>
@@ -496,7 +532,8 @@ const state = {
   flowMachine:MACHINES[0].id,
   config:{linkageUrl:'', notifyEmail:'', notifyThreshold:50, appUrl:''},
   linkageData:null,
-  customFlows:{}, // { machineId: [{id,label,color,steps:[{id,label,date,done}]}] }
+  customFlows:{},
+  futureModels:[], // 将来機種計画 [{id,code,name,salesDate,complianceDate,productionPlanDate,materialDate,mountingDate,deliveryDate,hallDate,memo}]
 };
 
 /* ============================================================
@@ -549,6 +586,7 @@ function saveToGAS(alertDesc){
       statuses:state.statuses,schedules:state.schedules,
       notes:state.notes,eco:state.eco,config:state.config,
       customFlows:state.customFlows,
+      futureModels:state.futureModels,
     });
     google.script.run.saveData(json);
     if(alertDesc && state.config.notifyEmail){
@@ -1934,6 +1972,235 @@ function renderLog(){
 }
 
 /* ============================================================
+   将来機種計画
+============================================================ */
+function updateFutureBadge(){
+  const el=document.getElementById('future-badge');
+  if(el)el.textContent=state.futureModels.length;
+}
+
+function renderFuturePage(){
+  updateFutureBadge();
+  const FUTURE_FIELDS=[
+    {key:'salesDate',        label:'販売予定日'},
+    {key:'complianceDate',   label:'適合日'},
+    {key:'productionPlanDate',label:'生産計画日'},
+    {key:'materialDate',     label:'材料手配日'},
+    {key:'mountingDate',     label:'実装手配日'},
+    {key:'deliveryDate',     label:'納入日'},
+    {key:'hallDate',         label:'ホール導入日'},
+  ];
+  const today=new Date(); today.setHours(0,0,0,0);
+  const rows=state.futureModels.map(m=>{
+    const cells=FUTURE_FIELDS.map(f=>{
+      const v=m[f.key]||'';
+      if(!v) return`<td class="inline-editable" data-fid="${m.id}" data-fkey="${f.key}" onclick="openFutureCell(this,'${m.id}','${f.key}')">—</td>`;
+      const d=new Date(v); const diff=Math.ceil((d-today)/86400000);
+      let style='';
+      if(diff<0) style='color:var(--text-muted);text-decoration:line-through;';
+      else if(diff<=14) style='color:var(--danger);font-weight:600;';
+      else if(diff<=30) style='color:var(--warning);font-weight:600;';
+      const disp=`${d.getMonth()+1}/${d.getDate()}`;
+      return`<td class="inline-editable" data-fid="${m.id}" data-fkey="${f.key}" onclick="openFutureCell(this,'${m.id}','${f.key}')" style="${style}">${disp}</td>`;
+    }).join('');
+    return`<tr>
+      <td><strong style="font-family:monospace;font-size:11px;">${m.code}</strong></td>
+      <td style="max-width:140px;font-size:12px;">${m.name||'—'}</td>
+      ${cells}
+      <td style="font-size:11px;color:var(--text-sub);max-width:120px;">${m.memo||''}</td>
+      <td>
+        <button class="btn btn-sm" style="padding:2px 8px;" onclick="openFutureEditModal('${m.id}')">編集</button>
+        <button class="btn btn-sm" style="padding:2px 8px;color:var(--danger);" onclick="deleteFutureModel('${m.id}')">削除</button>
+      </td>
+    </tr>`;
+  }).join('');
+  const empty=`<tr><td colspan="11" style="text-align:center;padding:48px;color:var(--text-muted);">将来機種データなし — 「追加」または「Excel取込」で登録してください</td></tr>`;
+  document.getElementById('page-future').innerHTML=`
+    <div class="page-heading">
+      <div><h2>🔭 将来機種計画</h2><p>2年先までの販売予定機種を管理</p></div>
+      <div style="display:flex;gap:8px;">
+        <label class="btn btn-sm" style="cursor:pointer;">
+          📥 サン電子Excel取込
+          <input type="file" accept=".xlsx,.xls" style="display:none" onchange="handleSunDenshiImport(event)">
+        </label>
+        <button class="btn btn-primary btn-sm" onclick="openFutureAddModal()">＋ 機種追加</button>
+      </div>
+    </div>
+    <div class="table-wrap" style="overflow-x:auto;">
+      <table style="min-width:900px;">
+        <thead><tr>
+          <th>機種コード</th><th>機種名</th>
+          <th>販売予定日</th><th>適合日</th><th>生産計画日</th>
+          <th>材料手配日</th><th>実装手配日</th><th>納入日</th><th>ホール導入日</th>
+          <th>備考</th><th>操作</th>
+        </tr></thead>
+        <tbody>${state.futureModels.length?rows:empty}</tbody>
+      </table>
+    </div>`;
+}
+
+function openFutureCell(td,id,key){
+  const m=state.futureModels.find(x=>x.id===id); if(!m)return;
+  const cur=m[key]||'';
+  const inp=document.createElement('input');
+  inp.type='date'; inp.value=cur; inp.style.cssText='width:130px;font-size:12px;padding:2px 4px;';
+  td.innerHTML=''; td.appendChild(inp); inp.focus();
+  const save=()=>{m[key]=inp.value;saveToGAS();renderFuturePage();addLog(`将来機種 ${m.code} ${key} 更新`);};
+  inp.onblur=save; inp.onkeydown=e=>{if(e.key==='Enter')save();if(e.key==='Escape')renderFuturePage();};
+}
+
+function deleteFutureModel(id){
+  if(!confirm('この機種を削除しますか?'))return;
+  const m=state.futureModels.find(x=>x.id===id);
+  state.futureModels=state.futureModels.filter(x=>x.id!==id);
+  saveToGAS(); renderFuturePage();
+  addLog(`将来機種削除: ${m?m.code:id}`);
+  showToast('削除しました');
+}
+
+function openFutureAddModal(){
+  document.getElementById('fm-id').value='';
+  ['fm-code','fm-name','fm-salesDate','fm-complianceDate','fm-productionPlanDate',
+   'fm-materialDate','fm-mountingDate','fm-deliveryDate','fm-hallDate','fm-memo'
+  ].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});
+  document.getElementById('fm-modal-title').textContent='将来機種 追加';
+  document.getElementById('future-modal').style.display='flex';
+}
+
+function openFutureEditModal(id){
+  const m=state.futureModels.find(x=>x.id===id); if(!m)return;
+  document.getElementById('fm-id').value=m.id;
+  document.getElementById('fm-code').value=m.code||'';
+  document.getElementById('fm-name').value=m.name||'';
+  document.getElementById('fm-salesDate').value=m.salesDate||'';
+  document.getElementById('fm-complianceDate').value=m.complianceDate||'';
+  document.getElementById('fm-productionPlanDate').value=m.productionPlanDate||'';
+  document.getElementById('fm-materialDate').value=m.materialDate||'';
+  document.getElementById('fm-mountingDate').value=m.mountingDate||'';
+  document.getElementById('fm-deliveryDate').value=m.deliveryDate||'';
+  document.getElementById('fm-hallDate').value=m.hallDate||'';
+  document.getElementById('fm-memo').value=m.memo||'';
+  document.getElementById('fm-modal-title').textContent='将来機種 編集';
+  document.getElementById('future-modal').style.display='flex';
+}
+
+function closeFutureModal(){
+  document.getElementById('future-modal').style.display='none';
+}
+
+function saveFutureModal(){
+  const code=document.getElementById('fm-code').value.trim();
+  if(!code){showToast('⚠️ 機種コードを入力してください');return;}
+  const eid=document.getElementById('fm-id').value;
+  const obj={
+    id: eid||('FM-'+Date.now()),
+    code, name:document.getElementById('fm-name').value.trim(),
+    salesDate:document.getElementById('fm-salesDate').value,
+    complianceDate:document.getElementById('fm-complianceDate').value,
+    productionPlanDate:document.getElementById('fm-productionPlanDate').value,
+    materialDate:document.getElementById('fm-materialDate').value,
+    mountingDate:document.getElementById('fm-mountingDate').value,
+    deliveryDate:document.getElementById('fm-deliveryDate').value,
+    hallDate:document.getElementById('fm-hallDate').value,
+    memo:document.getElementById('fm-memo').value.trim(),
+  };
+  if(eid){
+    const idx=state.futureModels.findIndex(x=>x.id===eid);
+    if(idx>=0)state.futureModels[idx]=obj;
+  }else{
+    state.futureModels.push(obj);
+  }
+  saveToGAS(); closeFutureModal(); renderFuturePage();
+  addLog(`将来機種${eid?'更新':'追加'}: ${code}`);
+  showToast(`✅ ${code} を${eid?'更新':'追加'}しました`);
+}
+
+// サン電子 生産計画Excel インポート
+function handleSunDenshiImport(e){
+  const file=e.target.files[0]; if(!file)return;
+  if(typeof XLSX==='undefined'){showToast('⚠️ XLSXライブラリが読み込まれていません');return;}
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    try{
+      const wb=XLSX.read(ev.target.result,{type:'binary',cellDates:true});
+      // 最新シートを選ぶ（日付っぽい名前 YYMMDD を降順）
+      const dated=wb.SheetNames.filter(s=>/^\d{6}$/.test(s)).sort((a,b)=>b.localeCompare(a));
+      const sheetName=dated[0]||wb.SheetNames[0];
+      const ws=wb.Sheets[sheetName];
+      const raw=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:false});
+      parseSunDenshiRows(raw,sheetName);
+    }catch(err){showToast('⚠️ 読み込みエラー: '+err.message);}
+  };
+  reader.readAsBinaryString(file);
+  e.target.value='';
+}
+
+function _excelDateStr(v){
+  if(!v)return null;
+  if(typeof v==='string'&&/\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/.test(v)){
+    const d=new Date(v); if(!isNaN(d))return fmtDate(d);
+  }
+  if(typeof v==='number'&&v>40000&&v<80000){
+    const d=XLSX.SSF.parse_date_code(v);
+    if(d)return`${d.y}-${String(d.m).padStart(2,'0')}-${String(d.d).padStart(2,'0')}`;
+  }
+  if(v instanceof Date&&!isNaN(v))return fmtDate(v);
+  return null;
+}
+
+function parseSunDenshiRows(rows,sheetName){
+  // 機種コード行: '機種名' ラベルのある行
+  let codeRowIdx=-1, nameRowIdx=-1, salesRowIdx=-1;
+  for(let i=0;i<Math.min(rows.length,15);i++){
+    const row=rows[i];
+    const joined=row.filter(Boolean).join('');
+    if(joined.includes('機種名')&&codeRowIdx<0) codeRowIdx=i;
+    if(joined.includes('タイトル')&&nameRowIdx<0) nameRowIdx=i;
+    if(joined.includes('販売時期')&&salesRowIdx<0) salesRowIdx=i;
+  }
+  // フォールバック
+  if(codeRowIdx<0) codeRowIdx=5;
+  if(nameRowIdx<0) nameRowIdx=6;
+  if(salesRowIdx<0) salesRowIdx=3;
+
+  const codeRow=rows[codeRowIdx]||[];
+  const nameRow=rows[nameRowIdx]||[];
+  const salesRow=rows[salesRowIdx]||[];
+
+  // データ開始列（機種コードが入っている列）を特定
+  const startCol=codeRow.findIndex((v,i)=>i>=5&&v&&String(v).trim().length>0&&!['機種名','タイトル','販売時期'].includes(String(v).trim()));
+
+  if(startCol<0){showToast('⚠️ 機種データ列が見つかりませんでした');return;}
+
+  const cutoff=new Date(); cutoff.setFullYear(cutoff.getFullYear()+1); // 1年超先 = 将来機種
+  const found=[];
+
+  for(let col=startCol;col<codeRow.length;col++){
+    const code=String(codeRow[col]||'').trim(); if(!code)continue;
+    const name=String(nameRow[col]||'').trim();
+    const salesStr=_excelDateStr(salesRow[col]);
+    if(!salesStr)continue;
+    const salesD=new Date(salesStr);
+    if(isNaN(salesD))continue;
+    // 1年以上先の機種のみ将来機種として取込
+    if(salesD<=cutoff)continue;
+    // 重複チェック
+    if(state.futureModels.find(m=>m.code===code))continue;
+    found.push({id:'FM-'+Date.now()+'-'+col, code, name, salesDate:salesStr,
+      complianceDate:'',productionPlanDate:'',materialDate:'',mountingDate:'',deliveryDate:'',hallDate:'',memo:'サン電子計画取込'});
+  }
+
+  if(found.length===0){
+    showToast('⚠️ 新規の将来機種（1年以上先）が見つかりませんでした');
+    return;
+  }
+  state.futureModels.push(...found);
+  saveToGAS(); renderFuturePage();
+  addLog(`サン電子Excel取込: ${found.map(m=>m.code).join(', ')}`);
+  showToast(`✅ ${found.length}機種を取込みました（シート: ${sheetName}）`);
+}
+
+/* ============================================================
    ROUTER
 ============================================================ */
 function renderPage(page){
@@ -1943,6 +2210,7 @@ function renderPage(page){
   else if(page==='flow')renderFlow();
   else if(page==='admin')renderAdmin();
   else if(page==='log')renderLog();
+  else if(page==='future')renderFuturePage();
 }
 
 /* ============================================================
@@ -1964,9 +2232,11 @@ function _init(saved){
       if(s.eco)Object.assign(state.eco,s.eco);
       if(s.config)Object.assign(state.config,s.config);
       if(s.customFlows)state.customFlows=s.customFlows;
+      if(s.futureModels)state.futureModels=s.futureModels;
     }catch(e){}
   }
   updateEcoBadge();
+  updateFutureBadge();
   renderDashboard();
 }
 
