@@ -195,6 +195,33 @@ td.editing select,td.editing input{width:100%;padding:5px 8px;border:1px solid v
 .flow-step-add-btn:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-light);}
 .flow-step-card.flow-drag-over{border-color:var(--primary);background:#dbeafe;transform:scale(1.03);}
 
+/* Flow table (enhanced) */
+.flow-tbl{width:100%;border-collapse:collapse;font-size:12px;}
+.flow-tbl th{background:#f8fafc;font-size:10.5px;font-weight:700;letter-spacing:.03em;padding:8px 10px;border:1px solid var(--border-light);white-space:nowrap;position:sticky;top:0;z-index:2;}
+.flow-tbl td{padding:8px 10px;border:1px solid var(--border-light);vertical-align:middle;}
+.flow-tbl tr:hover td{background:#f8fafc;}
+.flow-tbl .step-done-row td{background:#f0fdf4 !important;}
+.flow-tbl .step-near-row td{background:#fffbeb !important;}
+.flow-step-name-cell{font-weight:600;cursor:pointer;display:flex;align-items:center;gap:6px;min-width:120px;}
+.flow-step-name-cell:hover .edit-hint{opacity:1;}
+.edit-hint{opacity:0;font-size:9px;color:var(--primary);transition:opacity .15s;}
+.vendor-cell{min-width:170px;}
+.vp-bar-wrap{height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin:4px 0;}
+.vp-bar-fill{height:100%;border-radius:3px;transition:width .3s;}
+.vp-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:1px 7px;border-radius:10px;color:#fff;}
+.vendor-tag{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px;color:#fff;cursor:pointer;}
+.vendor-tag:hover{opacity:.85;}
+.flow-drag-handle{cursor:grab;color:var(--text-muted);font-size:14px;padding:0 4px;flex-shrink:0;}
+.flow-drag-handle:active{cursor:grabbing;}
+.tbl-step-row{transition:background .1s;}
+.tbl-step-row.dragging-row{opacity:.4;}
+.tbl-step-row.drag-over-row td{border-top:2px solid var(--primary) !important;}
+
+/* Vendor mgmt bar */
+.vendor-mgmt-bar{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 16px 10px;border-bottom:1px solid var(--border-light);background:#fafbfe;}
+.vendor-edit-chip{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;padding:3px 10px;border-radius:10px;color:#fff;cursor:pointer;user-select:none;}
+.vendor-edit-chip:hover{opacity:.85;}
+
 /* Gantt */
 .gantt-container{background:var(--card);border-radius:var(--radius);box-shadow:var(--shadow-sm);border:1px solid var(--border-light);overflow:hidden;}
 .gantt-row-head{width:190px;min-width:190px;flex-shrink:0;border-right:1px solid var(--border-light);padding:10px 14px;background:var(--card);display:flex;flex-direction:column;justify-content:center;}
@@ -312,6 +339,113 @@ select:focus{border-color:var(--primary);}
       <div id="page-admin" class="page"></div>
       <div id="page-log" class="page"></div>
       <div id="page-future" class="page"></div>
+    </div>
+  </div>
+</div>
+
+<!-- 委託先進捗 編集モーダル -->
+<div class="modal-overlay" id="vp-modal" style="display:none" onclick="if(event.target===this)closeVpModal()">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-head"><h3 id="vp-modal-title">進捗更新</h3><button class="modal-close" onclick="closeVpModal()">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="vp-machine"><input type="hidden" id="vp-group"><input type="hidden" id="vp-step"><input type="hidden" id="vp-vendor">
+      <div class="form-field">
+        <label>進捗率（%）</label>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <input type="range" id="vp-pct-range" min="0" max="100" step="5" style="flex:1;" oninput="document.getElementById('vp-pct-num').value=this.value">
+          <input type="number" id="vp-pct-num" min="0" max="100" style="width:60px;" oninput="document.getElementById('vp-pct-range').value=this.value">
+          <span>%</span>
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:10px;">
+        <div class="form-field">
+          <label>ステータス</label>
+          <select id="vp-status">
+            <option value="notstarted">⏳ 未着手</option>
+            <option value="inprogress">🔄 進行中</option>
+            <option value="done">✅ 完了</option>
+            <option value="hold">⏸ 保留</option>
+            <option value="issue">⚠️ 問題あり</option>
+          </select>
+        </div>
+        <div class="form-field">
+          <label>完了予定日</label>
+          <input type="date" id="vp-date">
+        </div>
+      </div>
+      <div class="form-field" style="margin-top:10px;">
+        <label>担当者</label>
+        <input type="text" id="vp-person" placeholder="担当者名">
+      </div>
+      <div class="form-field" style="margin-top:8px;">
+        <label>備考・特記事項</label>
+        <textarea id="vp-note" rows="3" placeholder="進捗メモ・問題点など"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" onclick="closeVpModal()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" onclick="saveVpModal()">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 委託先 追加/編集モーダル -->
+<div class="modal-overlay" id="vendor-edit-modal" style="display:none" onclick="if(event.target===this)closeVendorEditModal()">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-head"><h3 id="vendor-edit-title">委託先を編集</h3><button class="modal-close" onclick="closeVendorEditModal()">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="ve-machine"><input type="hidden" id="ve-group"><input type="hidden" id="ve-vendor">
+      <div class="form-row">
+        <div class="form-field"><label>委託先名 *</label><input type="text" id="ve-name" placeholder="例: いードリーム"></div>
+        <div class="form-field">
+          <label>カラー</label>
+          <input type="color" id="ve-color" style="width:100%;height:36px;padding:2px;border-radius:6px;cursor:pointer;">
+        </div>
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <div class="form-field"><label>担当者</label><input type="text" id="ve-contact" placeholder="例: 田中 太郎"></div>
+        <div class="form-field"><label>電話 / メール</label><input type="text" id="ve-tel" placeholder="例: 090-xxxx-xxxx"></div>
+      </div>
+      <div class="form-field" style="margin-top:8px;">
+        <label>役割・担当範囲</label>
+        <input type="text" id="ve-role" placeholder="例: 基板実装担当 / 組立担当">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" onclick="closeVendorEditModal()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" onclick="saveVendorEditModal()">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 工程詳細 編集モーダル -->
+<div class="modal-overlay" id="step-detail-modal" style="display:none" onclick="if(event.target===this)closeStepDetailModal()">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-head"><h3 id="sdm-title">工程詳細</h3><button class="modal-close" onclick="closeStepDetailModal()">✕</button></div>
+    <div class="modal-body">
+      <input type="hidden" id="sdm-machine"><input type="hidden" id="sdm-group"><input type="hidden" id="sdm-step">
+      <div class="form-row">
+        <div class="form-field"><label>工程名 *</label><input type="text" id="sdm-label" placeholder="工程名"></div>
+        <div class="form-field"><label>予定日</label><input type="date" id="sdm-date"></div>
+      </div>
+      <div class="form-row" style="margin-top:8px;">
+        <div class="form-field"><label>担当部署</label><input type="text" id="sdm-dept" placeholder="例: 製造部・品質管理"></div>
+        <div class="form-field">
+          <label>全体ステータス</label>
+          <select id="sdm-done">
+            <option value="false">🔄 進行中 / 未完了</option>
+            <option value="true">✅ 完了</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-field" style="margin-top:8px;">
+        <label>備考・作業内容</label>
+        <textarea id="sdm-note" rows="3" placeholder="作業詳細・注意事項など"></textarea>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" onclick="closeStepDetailModal()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" onclick="saveStepDetailModal()">💾 保存</button>
     </div>
   </div>
 </div>
@@ -1715,23 +1849,33 @@ function renderEco(){
    CUSTOM FLOW HELPERS
 ============================================================ */
 const FLOW_COLORS=['#2563eb','#7c3aed','#0891b2','#16a34a','#d97706','#dc2626','#db2777'];
+const VENDOR_COLORS=['#2563eb','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2','#db2777'];
 
 function getFlowsForMachine(machineId){
   if(state.customFlows&&state.customFlows[machineId]){
     return state.customFlows[machineId];
   }
-  // Build defaults from schedules
   const sc=state.schedules[machineId]||{};
   return [
-    {id:'grp_sample_'+machineId,label:'見本機フロー',color:'#7c3aed',steps:[
-      {id:'sampleImpl',label:'基板実装',date:sc.sampleImpl||null,done:!!(sc.sampleImpl&&isPast(sc.sampleImpl))},
-      {id:'sampleAssy',label:'組立',date:sc.sampleAssy||null,done:!!(sc.sampleAssy&&isPast(sc.sampleAssy))},
-      {id:'sampleShip',label:'出荷',date:sc.sampleShip||null,done:!!(sc.sampleShip&&isPast(sc.sampleShip))},
+    {id:'grp_sample_'+machineId,label:'見本機フロー',color:'#7c3aed',
+     vendors:[
+       {id:'v1',name:'委託先A',color:'#7c3aed',contact:'',tel:'',role:''},
+       {id:'v2',name:'委託先B',color:'#0891b2',contact:'',tel:'',role:''},
+     ],
+     steps:[
+      {id:'sampleImpl',label:'基板実装',date:sc.sampleImpl||null,done:false,dept:'',note:'',vp:{}},
+      {id:'sampleAssy', label:'組立',    date:sc.sampleAssy||null, done:false,dept:'',note:'',vp:{}},
+      {id:'sampleShip', label:'出荷',    date:sc.sampleShip||null, done:false,dept:'',note:'',vp:{}},
     ]},
-    {id:'grp_prod_'+machineId,label:'量産フロー',color:'#2563eb',steps:[
-      {id:'prodImpl',label:'基板実装',date:sc.prodImpl||null,done:!!(sc.prodImpl&&isPast(sc.prodImpl))},
-      {id:'prodAssy',label:'組立',date:sc.prodAssy||null,done:!!(sc.prodAssy&&isPast(sc.prodAssy))},
-      {id:'prodShip',label:'出荷',date:sc.prodShip||null,done:!!(sc.prodShip&&isPast(sc.prodShip))},
+    {id:'grp_prod_'+machineId,label:'量産フロー',color:'#2563eb',
+     vendors:[
+       {id:'v1',name:'委託先A',color:'#2563eb',contact:'',tel:'',role:''},
+       {id:'v2',name:'委託先B',color:'#16a34a',contact:'',tel:'',role:''},
+     ],
+     steps:[
+      {id:'prodImpl',label:'基板実装',date:sc.prodImpl||null,done:false,dept:'',note:'',vp:{}},
+      {id:'prodAssy', label:'組立',    date:sc.prodAssy||null, done:false,dept:'',note:'',vp:{}},
+      {id:'prodShip', label:'出荷',    date:sc.prodShip||null, done:false,dept:'',note:'',vp:{}},
     ]},
   ];
 }
@@ -1742,68 +1886,17 @@ function saveFlowForMachine(machineId,groups){
   saveToGAS();
 }
 
-let _flowDragSrc=null;
-
-function flowDragStart(e,machineId,groupId,stepIdx){
-  _flowDragSrc={machineId,groupId,stepIdx};
-  e.dataTransfer.effectAllowed='move';
-  e.currentTarget.style.opacity='0.4';
-}
-function flowDragEnd(e){e.currentTarget.style.opacity='';}
-function flowDragOver(e,machineId,groupId,stepIdx){
-  e.preventDefault();
-  e.dataTransfer.dropEffect='move';
-  e.currentTarget.classList.add('flow-drag-over');
-}
-function flowDragLeave(e){e.currentTarget.classList.remove('flow-drag-over');}
-function flowDrop(e,machineId,groupId,stepIdx){
-  e.preventDefault();
-  e.currentTarget.classList.remove('flow-drag-over');
-  if(!_flowDragSrc)return;
-  if(_flowDragSrc.machineId!==machineId||_flowDragSrc.groupId!==groupId)return;
-  if(_flowDragSrc.stepIdx===stepIdx){_flowDragSrc=null;return;}
-  const groups=getFlowsForMachine(machineId);
-  const grp=groups.find(g=>g.id===groupId);
-  if(!grp){_flowDragSrc=null;return;}
-  const [moved]=grp.steps.splice(_flowDragSrc.stepIdx,1);
-  grp.steps.splice(stepIdx,0,moved);
-  _flowDragSrc=null;
-  saveFlowForMachine(machineId,groups);
-  renderPage('flow');
-}
-
-function addFlowStep(machineId,groupId){
-  const groups=getFlowsForMachine(machineId);
-  const grp=groups.find(g=>g.id===groupId);
-  if(!grp)return;
-  const newId='step_'+Date.now();
-  grp.steps.push({id:newId,label:'工程 '+(grp.steps.length+1),date:null,done:false});
-  saveFlowForMachine(machineId,groups);
-  renderPage('flow');
-  // auto-focus the new step label
-  setTimeout(()=>{
-    const el=document.getElementById('flabel_'+newId);
-    if(el)el.click();
-  },50);
-}
-
-function deleteFlowStep(machineId,groupId,stepId){
-  const groups=getFlowsForMachine(machineId);
-  const grp=groups.find(g=>g.id===groupId);
-  if(!grp)return;
-  if(grp.steps.length<=1){showToast('最後のステップは削除できません');return;}
-  grp.steps=grp.steps.filter(s=>s.id!==stepId);
-  saveFlowForMachine(machineId,groups);
-  addLog(machineId+' フローステップ削除');
-  renderPage('flow');
-}
-
 function addFlowGroup(machineId){
   const groups=getFlowsForMachine(machineId);
   const color=FLOW_COLORS[groups.length%FLOW_COLORS.length];
-  const newGrp={id:'grp_'+Date.now(),label:'フロー '+(groups.length+1),color,steps:[
-    {id:'step_'+Date.now(),label:'工程 1',date:null,done:false}
-  ]};
+  const newGrp={
+    id:'grp_'+Date.now(),label:'フロー '+(groups.length+1),color,
+    vendors:[
+      {id:'v1',name:'委託先A',color:VENDOR_COLORS[0],contact:'',tel:'',role:''},
+      {id:'v2',name:'委託先B',color:VENDOR_COLORS[1],contact:'',tel:'',role:''},
+    ],
+    steps:[{id:'step_'+Date.now(),label:'工程 1',date:null,done:false,dept:'',note:'',vp:{}}]
+  };
   groups.push(newGrp);
   saveFlowForMachine(machineId,groups);
   addLog(machineId+' 新規フロー追加');
@@ -1813,6 +1906,7 @@ function addFlowGroup(machineId){
 function deleteFlowGroup(machineId,groupId){
   const groups=getFlowsForMachine(machineId);
   if(groups.length<=1){showToast('最後のフローは削除できません');return;}
+  if(!confirm('このフローを削除しますか?'))return;
   const idx=groups.findIndex(g=>g.id===groupId);
   if(idx>=0)groups.splice(idx,1);
   saveFlowForMachine(machineId,groups);
@@ -1820,6 +1914,179 @@ function deleteFlowGroup(machineId,groupId){
   renderPage('flow');
 }
 
+function addFlowStep(machineId,groupId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  const newId='step_'+Date.now();
+  grp.steps.push({id:newId,label:'工程 '+(grp.steps.length+1),date:null,done:false,dept:'',note:'',vp:{}});
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+function deleteFlowStep(machineId,groupId,stepId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  if(grp.steps.length<=1){showToast('最後のステップは削除できません');return;}
+  if(!confirm('この工程を削除しますか?'))return;
+  grp.steps=grp.steps.filter(s=>s.id!==stepId);
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+// ---- Vendor management ----
+function addVendorToGroup(machineId,groupId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  if(!grp.vendors)grp.vendors=[];
+  const color=VENDOR_COLORS[grp.vendors.length%VENDOR_COLORS.length];
+  const vid='v'+Date.now();
+  grp.vendors.push({id:vid,name:'委託先'+(grp.vendors.length+1),color,contact:'',tel:'',role:''});
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+function removeVendorFromGroup(machineId,groupId,vendorId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp||!grp.vendors)return;
+  if(grp.vendors.length<=1){showToast('最低1社の委託先が必要です');return;}
+  if(!confirm('この委託先を削除しますか? 進捗データも消去されます。'))return;
+  grp.vendors=grp.vendors.filter(v=>v.id!==vendorId);
+  grp.steps.forEach(s=>{if(s.vp)delete s.vp[vendorId];});
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+function openVendorEditModal(machineId,groupId,vendorId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const v=grp&&grp.vendors?grp.vendors.find(x=>x.id===vendorId):null;
+  document.getElementById('ve-machine').value=machineId;
+  document.getElementById('ve-group').value=groupId;
+  document.getElementById('ve-vendor').value=vendorId||'';
+  document.getElementById('ve-name').value=v?v.name:'';
+  document.getElementById('ve-color').value=v?v.color:'#2563eb';
+  document.getElementById('ve-contact').value=v?v.contact||'':'';
+  document.getElementById('ve-tel').value=v?v.tel||'':'';
+  document.getElementById('ve-role').value=v?v.role||'':'';
+  document.getElementById('vendor-edit-title').textContent=vendorId?`委託先編集: ${v?v.name:''}` :'委託先追加';
+  document.getElementById('vendor-edit-modal').style.display='flex';
+}
+function closeVendorEditModal(){document.getElementById('vendor-edit-modal').style.display='none';}
+function saveVendorEditModal(){
+  const machineId=document.getElementById('ve-machine').value;
+  const groupId=document.getElementById('ve-group').value;
+  const vendorId=document.getElementById('ve-vendor').value;
+  const name=document.getElementById('ve-name').value.trim();
+  if(!name){showToast('⚠️ 委託先名を入力してください');return;}
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  if(!grp.vendors)grp.vendors=[];
+  const obj={
+    id:vendorId||'v'+Date.now(), name,
+    color:document.getElementById('ve-color').value,
+    contact:document.getElementById('ve-contact').value.trim(),
+    tel:document.getElementById('ve-tel').value.trim(),
+    role:document.getElementById('ve-role').value.trim(),
+  };
+  const idx=grp.vendors.findIndex(v=>v.id===vendorId);
+  if(idx>=0)grp.vendors[idx]=obj; else grp.vendors.push(obj);
+  saveFlowForMachine(machineId,groups);
+  closeVendorEditModal();
+  renderPage('flow');
+  showToast(`✅ ${name} を保存しました`);
+}
+
+// ---- Vendor Progress Modal ----
+function openVpModal(machineId,groupId,stepId,vendorId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const step=grp&&grp.steps?grp.steps.find(s=>s.id===stepId):null;
+  const vendor=grp&&grp.vendors?grp.vendors.find(v=>v.id===vendorId):null;
+  const vp=(step&&step.vp&&step.vp[vendorId])||{pct:0,status:'notstarted',date:'',person:'',note:''};
+  document.getElementById('vp-machine').value=machineId;
+  document.getElementById('vp-group').value=groupId;
+  document.getElementById('vp-step').value=stepId;
+  document.getElementById('vp-vendor').value=vendorId;
+  document.getElementById('vp-pct-range').value=vp.pct||0;
+  document.getElementById('vp-pct-num').value=vp.pct||0;
+  document.getElementById('vp-status').value=vp.status||'notstarted';
+  document.getElementById('vp-date').value=vp.date||'';
+  document.getElementById('vp-person').value=vp.person||'';
+  document.getElementById('vp-note').value=vp.note||'';
+  const vName=vendor?vendor.name:'委託先';
+  const sName=step?step.label:'工程';
+  document.getElementById('vp-modal-title').textContent=`${vName} / ${sName} — 進捗更新`;
+  document.getElementById('vp-modal').style.display='flex';
+}
+function closeVpModal(){document.getElementById('vp-modal').style.display='none';}
+function saveVpModal(){
+  const machineId=document.getElementById('vp-machine').value;
+  const groupId=document.getElementById('vp-group').value;
+  const stepId=document.getElementById('vp-step').value;
+  const vendorId=document.getElementById('vp-vendor').value;
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const step=grp&&grp.steps?grp.steps.find(s=>s.id===stepId):null;
+  if(!step)return;
+  if(!step.vp)step.vp={};
+  step.vp[vendorId]={
+    pct:parseInt(document.getElementById('vp-pct-num').value)||0,
+    status:document.getElementById('vp-status').value,
+    date:document.getElementById('vp-date').value,
+    person:document.getElementById('vp-person').value.trim(),
+    note:document.getElementById('vp-note').value.trim(),
+  };
+  saveFlowForMachine(machineId,groups);
+  closeVpModal();
+  renderPage('flow');
+  showToast('✅ 進捗を保存しました');
+}
+
+// ---- Step Detail Modal ----
+function openStepDetailModal(machineId,groupId,stepId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const step=grp&&grp.steps?grp.steps.find(s=>s.id===stepId):null;
+  if(!step)return;
+  document.getElementById('sdm-machine').value=machineId;
+  document.getElementById('sdm-group').value=groupId;
+  document.getElementById('sdm-step').value=stepId;
+  document.getElementById('sdm-label').value=step.label||'';
+  document.getElementById('sdm-date').value=step.date||'';
+  document.getElementById('sdm-dept').value=step.dept||'';
+  document.getElementById('sdm-done').value=step.done?'true':'false';
+  document.getElementById('sdm-note').value=step.note||'';
+  document.getElementById('sdm-title').textContent=`工程詳細: ${step.label}`;
+  document.getElementById('step-detail-modal').style.display='flex';
+}
+function closeStepDetailModal(){document.getElementById('step-detail-modal').style.display='none';}
+function saveStepDetailModal(){
+  const machineId=document.getElementById('sdm-machine').value;
+  const groupId=document.getElementById('sdm-group').value;
+  const stepId=document.getElementById('sdm-step').value;
+  const label=document.getElementById('sdm-label').value.trim();
+  if(!label){showToast('⚠️ 工程名を入力してください');return;}
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const step=grp&&grp.steps?grp.steps.find(s=>s.id===stepId):null;
+  if(!step)return;
+  step.label=label;
+  step.date=document.getElementById('sdm-date').value||null;
+  step.dept=document.getElementById('sdm-dept').value.trim();
+  step.done=document.getElementById('sdm-done').value==='true';
+  step.note=document.getElementById('sdm-note').value.trim();
+  saveFlowForMachine(machineId,groups);
+  closeStepDetailModal();
+  renderPage('flow');
+  showToast(`✅ 工程「${label}」を保存しました`);
+}
+
+// Inline group label edit
 function startEditFlowGroupLabel(e,machineId,groupId){
   e.stopPropagation();
   const span=e.currentTarget;
@@ -1828,66 +2095,12 @@ function startEditFlowGroupLabel(e,machineId,groupId){
   if(!grp)return;
   const input=document.createElement('input');
   input.type='text';input.value=grp.label;
-  input.style.cssText='font-size:13px;font-weight:700;border:1px solid var(--primary);border-radius:4px;padding:2px 8px;width:180px;outline:none;background:#fff;';
+  input.style.cssText='font-size:13px;font-weight:700;padding:2px 6px;border:1px solid var(--primary);border-radius:4px;width:200px;';
   span.replaceWith(input);input.focus();input.select();
   const commit=()=>{grp.label=input.value.trim()||grp.label;saveFlowForMachine(machineId,groups);renderPage('flow');};
-  input.addEventListener('blur',commit);
-  input.addEventListener('keydown',ev=>{if(ev.key==='Enter')commit();if(ev.key==='Escape')renderPage('flow');});
+  input.onblur=commit;input.onkeydown=e2=>{if(e2.key==='Enter')commit();if(e2.key==='Escape')renderPage('flow');};
 }
 
-function startEditFlowStepLabel(e,machineId,groupId,stepId){
-  e.stopPropagation();
-  const span=e.currentTarget;
-  const groups=getFlowsForMachine(machineId);
-  const grp=groups.find(g=>g.id===groupId);
-  if(!grp)return;
-  const step=grp.steps.find(s=>s.id===stepId);
-  if(!step)return;
-  const input=document.createElement('input');
-  input.type='text';input.value=step.label;
-  input.style.cssText='font-size:12px;font-weight:600;border:1px solid var(--primary);border-radius:4px;padding:2px 6px;width:100%;outline:none;background:#fff;';
-  span.replaceWith(input);input.focus();input.select();
-  const commit=()=>{step.label=input.value.trim()||step.label;saveFlowForMachine(machineId,groups);renderPage('flow');};
-  input.addEventListener('blur',commit);
-  input.addEventListener('keydown',ev=>{if(ev.key==='Enter')commit();if(ev.key==='Escape')renderPage('flow');});
-}
-
-function startEditFlowStepDate(e,machineId,groupId,stepId){
-  e.stopPropagation();
-  const span=e.currentTarget;
-  const groups=getFlowsForMachine(machineId);
-  const grp=groups.find(g=>g.id===groupId);
-  if(!grp)return;
-  const step=grp.steps.find(s=>s.id===stepId);
-  if(!step)return;
-  const input=document.createElement('input');
-  input.type='date';input.value=step.date?fmtDate(step.date):'';
-  input.style.cssText='font-size:11px;border:1px solid var(--primary);border-radius:4px;padding:2px 4px;width:136px;outline:none;background:#fff;';
-  span.replaceWith(input);input.focus();
-  const commit=()=>{
-    step.date=input.value||null;
-    step.done=step.date?isPast(step.date):false;
-    saveFlowForMachine(machineId,groups);
-    renderPage('flow');
-  };
-  input.addEventListener('blur',commit);
-  input.addEventListener('change',commit);
-}
-
-function toggleFlowStepDone(machineId,groupId,stepId){
-  const groups=getFlowsForMachine(machineId);
-  const grp=groups.find(g=>g.id===groupId);
-  if(!grp)return;
-  const step=grp.steps.find(s=>s.id===stepId);
-  if(!step)return;
-  step.done=!step.done;
-  saveFlowForMachine(machineId,groups);
-  renderPage('flow');
-}
-
-/* ============================================================
-   RENDER: FLOW
-============================================================ */
 function renderFlow(){
   const selId=state.flowMachine||MACHINES[0].id;
   const m=MACHINES.find(x=>x.id===selId);
@@ -1898,74 +2111,129 @@ function renderFlow(){
     <button class="btn btn-sm ${x.id===selId?'btn-primary':''}"
       onclick="state.flowMachine='${x.id}';renderPage('flow');">${x.id}</button>`).join('');
 
-  function stepCardHtml(step,stepIdx,grp){
-    const d=step.date;
-    const done=step.done||isPast(d);
-    const near=!done&&isNear(d);
-    const active=!done&&!near&&d;
-    const statusClass=done?'step-done':near?'step-near':active?'step-active':'';
-    const icon=done?'✅':near?'⚠️':active?'🔄':'⏳';
-    const diff=getDiff(d);
-    const diffLabel=d?(done?'完了':near?'⚠️ あと'+diff+'日':'あと'+diff+'日'):'未設定';
-    const diffColor=done?'var(--success)':near?'var(--warning)':'var(--text-muted)';
-    const connector=stepIdx>0?'<div class="flow-step-connector">→</div>':'';
-    return `${connector}
-      <div class="flow-step-card ${statusClass}"
-        draggable="true"
-        ondragstart="flowDragStart(event,'${selId}','${grp.id}',${stepIdx})"
-        ondragend="flowDragEnd(event)"
-        ondragover="flowDragOver(event,'${selId}','${grp.id}',${stepIdx})"
-        ondragleave="flowDragLeave(event)"
-        ondrop="flowDrop(event,'${selId}','${grp.id}',${stepIdx})">
-        <div class="flow-step-num" style="background:${done?'var(--success)':near?'var(--warning)':grp.color||'var(--primary)'};">${stepIdx+1}</div>
-        <div class="flow-step-icon" title="${done?'完了':'クリックで完了切替'}" onclick="toggleFlowStepDone('${selId}','${grp.id}','${step.id}')" style="cursor:pointer;">${icon}</div>
-        <div class="flow-step-del" onclick="deleteFlowStep('${selId}','${grp.id}','${step.id}')">✕ 削除</div>
-        <div class="flow-step-label" id="flabel_${step.id}"
-          onclick="startEditFlowStepLabel(event,'${selId}','${grp.id}','${step.id}')"
-          title="クリックで編集">${step.label}</div>
-        <div class="flow-step-date"
-          onclick="startEditFlowStepDate(event,'${selId}','${grp.id}','${step.id}')"
-          title="クリックで日付設定">📅 ${fmtD(d)}</div>
-        <div class="flow-step-diff" style="color:${diffColor};">${diffLabel}</div>
-      </div>`;
+  const VP_STATUS_ICON={notstarted:'⏳',inprogress:'🔄',done:'✅',hold:'⏸',issue:'⚠️'};
+  const VP_STATUS_COLOR={notstarted:'var(--text-muted)',inprogress:'var(--primary)',done:'var(--success)',hold:'var(--warning)',issue:'var(--danger)'};
+
+  function vendorCellHtml(step,vendor){
+    const vp=(step.vp&&step.vp[vendor.id])||{pct:0,status:'notstarted',date:'',person:'',note:''};
+    const icon=VP_STATUS_ICON[vp.status]||'⏳';
+    const color=VP_STATUS_COLOR[vp.status]||'var(--text-muted)';
+    const pct=vp.pct||0;
+    return `<td class="vendor-cell" onclick="openVpModal('${selId}','${step._grpId||''}','${step.id}','${vendor.id}')" style="cursor:pointer;transition:background .15s;" onmouseover="this.style.background='#f0f4ff'" onmouseout="this.style.background=''">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+        <span style="font-size:14px;">${icon}</span>
+        <span style="font-size:11px;font-weight:600;color:${color};">${pct}%</span>
+        ${vp.person?`<span style="font-size:10px;color:var(--text-sub);">${vp.person}</span>`:''}
+      </div>
+      <div class="vp-bar-wrap"><div class="vp-bar-fill" style="width:${pct}%;background:${vendor.color};"></div></div>
+      ${vp.date?`<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">📅 ${fmtD(vp.date)}</div>`:''}
+      ${vp.note?`<div style="font-size:10px;color:var(--text-sub);margin-top:2px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${vp.note}">💬 ${vp.note}</div>`:''}
+    </td>`;
   }
 
   const groupsHtml=groups.map(grp=>{
-    const doneCount=grp.steps.filter(s=>s.done||isPast(s.date)).length;
+    if(!grp.vendors||!grp.vendors.length)grp.vendors=[
+      {id:'v1',name:'委託先A',color:grp.color||'#2563eb',contact:'',tel:'',role:''},
+      {id:'v2',name:'委託先B',color:'#16a34a',contact:'',tel:'',role:''},
+    ];
+    const vendors=grp.vendors;
+
+    // Overall done count: step done if done flag OR all vendors >=100% OR done status
+    const doneCount=grp.steps.filter(s=>{
+      if(s.done)return true;
+      if(!vendors.length)return isPast(s.date);
+      return vendors.every(v=>(s.vp&&s.vp[v.id]&&(s.vp[v.id].status==='done'||s.vp[v.id].pct>=100)));
+    }).length;
     const pct=grp.steps.length>0?Math.round(doneCount/grp.steps.length*100):0;
-    const stepsHtml=grp.steps.map((s,si)=>
-      `<div class="flow-step-wrapper">${stepCardHtml(s,si,grp)}</div>`).join('');
-    return `
-      <div class="flow-group-card">
-        <div class="flow-group-header">
-          <div class="flow-group-title">
-            <div class="flow-group-color-dot" style="background:${grp.color||'var(--primary)'}"></div>
-            <span class="flow-group-title-text"
-              onclick="startEditFlowGroupLabel(event,'${selId}','${grp.id}')"
-              title="クリックで名称変更">${grp.label}</span>
-            <span style="font-size:11px;font-weight:400;color:var(--text-muted);">${doneCount}/${grp.steps.length} 完了</span>
+
+    const vendorHeaderCols=vendors.map(v=>`
+      <th style="background:${v.color}22;min-width:170px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+          <div style="display:flex;align-items:center;gap:5px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:${v.color};flex-shrink:0;display:inline-block;"></span>
+            <span style="cursor:pointer;" onclick="openVendorEditModal('${selId}','${grp.id}','${v.id}')">${v.name}</span>
           </div>
-          <div style="display:flex;align-items:center;gap:12px;">
-            <div class="prog-wrap" style="width:130px;">
-              <div class="prog-track"><div class="prog-fill" style="width:${pct}%;background:${grp.color||'var(--primary)'}"></div></div>
-              <span style="font-size:11px;color:var(--text-sub);min-width:34px;">${pct}%</span>
-            </div>
-            <button class="btn btn-sm btn-danger" onclick="deleteFlowGroup('${selId}','${grp.id}')">削除</button>
+          <div style="display:flex;gap:3px;">
+            <button class="btn btn-sm" style="padding:1px 5px;font-size:10px;" onclick="openVendorEditModal('${selId}','${grp.id}','${v.id}')">✏️</button>
+            <button class="btn btn-sm" style="padding:1px 5px;font-size:10px;color:var(--danger);" onclick="removeVendorFromGroup('${selId}','${grp.id}','${v.id}')">✕</button>
           </div>
         </div>
-        <div class="flow-steps-container">
-          ${stepsHtml}
-          <div class="flow-step-wrapper">
-            ${grp.steps.length>0?'<div class="flow-step-connector">→</div>':''}
-            <div class="flow-step-add-btn" onclick="addFlowStep('${selId}','${grp.id}')" title="ステップ追加">＋</div>
+        ${v.role?`<div style="font-size:9px;color:var(--text-sub);font-weight:400;margin-top:2px;">${v.role}</div>`:''}
+        ${v.contact?`<div style="font-size:9px;color:var(--text-sub);font-weight:400;">${v.contact}${v.tel?' / '+v.tel:''}</div>`:''}
+      </th>`).join('');
+
+    const stepsRows=grp.steps.map((s,si)=>{
+      s._grpId=grp.id;
+      const allDone=s.done||vendors.every(v=>(s.vp&&s.vp[v.id]&&(s.vp[v.id].status==='done'||s.vp[v.id].pct>=100)));
+      const hasIssue=vendors.some(v=>(s.vp&&s.vp[v.id]&&s.vp[v.id].status==='issue'));
+      const rowClass=allDone?'step-done-row':hasIssue?'step-near-row':'tbl-step-row';
+      const d=s.date;
+      const diff=getDiff(d);
+      const dateColor=allDone?'var(--success)':isNear(d)?'var(--warning)':isPast(d)&&!allDone?'var(--danger)':'var(--text-sub)';
+      const vendorCells=vendors.map(v=>vendorCellHtml(s,v)).join('');
+      return `<tr class="${rowClass}">
+        <td style="width:28px;text-align:center;color:var(--text-muted);font-size:11px;font-weight:700;">${si+1}</td>
+        <td>
+          <div class="flow-step-name-cell" onclick="openStepDetailModal('${selId}','${grp.id}','${s.id}')">
+            <span style="font-size:14px;">${allDone?'✅':hasIssue?'⚠️':'🔄'}</span>
+            <span>${s.label}</span>
+            <span class="edit-hint">✏️</span>
           </div>
+          ${s.dept?`<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${s.dept}</div>`:''}
+          ${s.note?`<div style="font-size:10px;color:var(--text-sub);margin-top:2px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${s.note}">💬 ${s.note}</div>`:''}
+        </td>
+        <td style="white-space:nowrap;">
+          ${d?`<span style="font-family:monospace;font-size:11px;color:${dateColor};">${fmtD(d)}</span><br><span style="font-size:10px;color:${dateColor};">${allDone?'完了':diff!==null?(diff<0?`${Math.abs(diff)}日超過`:`あと${diff}日`):''}  </span>`:'<span style="color:var(--text-muted);font-size:11px;">—</span>'}
+        </td>
+        ${vendorCells}
+        <td style="white-space:nowrap;width:80px;">
+          <button class="btn btn-sm" style="padding:2px 6px;font-size:10px;" onclick="openStepDetailModal('${selId}','${grp.id}','${s.id}')">詳細</button>
+          <button class="btn btn-sm" style="padding:2px 6px;font-size:10px;color:var(--danger);margin-top:3px;" onclick="deleteFlowStep('${selId}','${grp.id}','${s.id}')">削除</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="flow-group-card">
+      <div class="flow-group-header">
+        <div class="flow-group-title">
+          <div class="flow-group-color-dot" style="background:${grp.color};"></div>
+          <span class="flow-group-title-text" onclick="startEditFlowGroupLabel(event,'${selId}','${grp.id}')" title="クリックで名称変更">${grp.label}</span>
+          <span style="font-size:11px;font-weight:400;color:var(--text-muted);">${doneCount}/${grp.steps.length} 完了</span>
         </div>
-      </div>`;
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="prog-wrap" style="width:120px;">
+            <div class="prog-track"><div class="prog-fill" style="width:${pct}%;background:${grp.color||'var(--primary)'}"></div></div>
+            <span style="font-size:11px;color:var(--text-sub);min-width:34px;">${pct}%</span>
+          </div>
+          <button class="btn btn-sm btn-danger" onclick="deleteFlowGroup('${selId}','${grp.id}')">フロー削除</button>
+        </div>
+      </div>
+      <div class="vendor-mgmt-bar">
+        <span style="font-size:10px;font-weight:700;color:var(--text-muted);letter-spacing:.06em;">委託先：</span>
+        ${vendors.map(v=>`<span class="vendor-edit-chip" style="background:${v.color};" onclick="openVendorEditModal('${selId}','${grp.id}','${v.id}')">${v.name}${v.role?` (${v.role})`:''}</span>`).join('')}
+        <button class="btn btn-sm" style="padding:2px 10px;font-size:10px;" onclick="addVendorToGroup('${selId}','${grp.id}')">＋ 委託先追加</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="flow-tbl">
+          <thead><tr>
+            <th style="width:28px;">#</th>
+            <th>工程名</th>
+            <th style="min-width:90px;">予定日</th>
+            ${vendorHeaderCols}
+            <th style="width:80px;">操作</th>
+          </tr></thead>
+          <tbody>${stepsRows}</tbody>
+        </table>
+      </div>
+      <div style="padding:10px 16px;border-top:1px solid var(--border-light);">
+        <button class="btn btn-sm" onclick="addFlowStep('${selId}','${grp.id}')">＋ 工程追加</button>
+      </div>
+    </div>`;
   }).join('');
 
   document.getElementById('page-flow').innerHTML=`
     <div class="page-heading">
-      <div><h2>🔄 業務フロー</h2><p>機種ごとにステップをカスタマイズ ／ クリックで編集・ドラッグで並び替え</p></div>
+      <div><h2>🔄 業務フロー</h2><p>機種ごとに工程・委託先を管理 ／ 工程名クリックで詳細編集・委託先セルクリックで進捗更新</p></div>
       <button class="btn btn-primary btn-sm" onclick="addFlowGroup('${selId}')">＋ フロー追加</button>
     </div>
     <div class="filter-bar" style="flex-wrap:wrap;gap:6px;">${machineBtnsHtml}</div>
@@ -1993,6 +2261,7 @@ function renderFlow(){
       </div>
     </div>`;
 }
+
 
 /* ============================================================
    RENDER: ADMIN CONSOLE
