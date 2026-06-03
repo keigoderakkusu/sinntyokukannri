@@ -217,6 +217,32 @@ td.editing select,td.editing input{width:100%;padding:5px 8px;border:1px solid v
 .tbl-step-row.dragging-row{opacity:.4;}
 .tbl-step-row.drag-over-row td{border-top:2px solid var(--primary) !important;}
 
+/* Milestone timeline */
+.milestone-section{background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius);margin-bottom:12px;overflow:hidden;}
+.milestone-header{display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:linear-gradient(135deg,#0f172a,#1e3a5f);border-bottom:1px solid var(--border-light);}
+.milestone-header h4{color:#fff;font-size:13px;font-weight:700;margin:0;}
+.milestone-body{padding:20px 24px;}
+.timeline-track{position:relative;height:6px;background:#e2e8f0;border-radius:3px;margin:32px 0 48px;}
+.timeline-fill{position:absolute;left:0;top:0;height:100%;border-radius:3px;background:linear-gradient(90deg,#16a34a,#2563eb);transition:width .5s;}
+.timeline-pin{position:absolute;top:50%;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;}
+.timeline-pin-dot{width:14px;height:14px;border-radius:50%;border:3px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.25);flex-shrink:0;}
+.timeline-pin-label{position:absolute;top:14px;font-size:10px;font-weight:700;white-space:nowrap;text-align:center;transform:translateX(-50%);left:50%;}
+.timeline-pin-sub{position:absolute;bottom:14px;font-size:9px;white-space:nowrap;transform:translateX(-50%);left:50%;color:var(--text-muted);}
+.milestone-card{background:#f8fafc;border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:8px;display:flex;align-items:flex-start;gap:14px;}
+.milestone-card.alert{background:#fef2f2;border-color:#fca5a5;}
+.milestone-card.ok{background:#f0fdf4;border-color:#86efac;}
+.milestone-card.warn{background:#fffbeb;border-color:#fcd34d;}
+.milestone-icon{font-size:24px;flex-shrink:0;line-height:1;margin-top:2px;}
+.milestone-info{flex:1;min-width:0;}
+.milestone-info h5{font-size:12px;font-weight:700;margin:0 0 3px;}
+.milestone-info .date-row{font-size:13px;font-weight:700;font-family:monospace;color:var(--primary);}
+.milestone-info .status-row{font-size:11px;margin-top:4px;}
+.linkage-tag{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;margin-top:4px;}
+.linkage-tag.linked{background:#d1fae5;color:#065f46;}
+.linkage-tag.unlinked{background:#fee2e2;color:#991b1b;}
+.linkage-tag.unknown{background:#f3f4f6;color:#6b7280;}
+.ms-counter{display:inline-block;font-size:18px;font-weight:800;font-family:monospace;color:var(--primary);}
+
 /* Delivery docs */
 .ddoc-card{background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius);margin-bottom:12px;overflow:hidden;}
 .ddoc-header{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;background:#f8fafc;border-bottom:1px solid var(--border-light);}
@@ -352,6 +378,91 @@ select:focus{border-color:var(--primary);}
       <div id="page-admin" class="page"></div>
       <div id="page-log" class="page"></div>
       <div id="page-future" class="page"></div>
+    </div>
+  </div>
+</div>
+
+<!-- マイルストーン設定モーダル -->
+<div class="modal-overlay" id="milestone-modal" style="display:none" onclick="if(event.target===this)closeMilestoneModal()">
+  <div class="modal" style="max-width:520px;">
+    <div class="modal-head">
+      <h3>🎯 ゴール設定・逆算スケジュール</h3>
+      <button class="modal-close" onclick="closeMilestoneModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ms-machine">
+
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:14px;font-size:11px;color:#1e40af;">
+        ℹ️ <strong>初回納品日（ゴール）</strong>を設定すると、見積書提出・注文書受領の期限を自動逆算します。
+        納入指示書が登録済みの場合は「自動取得」ボタンで最初の納入日をゴールに設定できます。
+      </div>
+
+      <!-- ゴール日 -->
+      <div class="form-row">
+        <div class="form-field" style="flex:2;">
+          <label>🎯 初回納品日（ゴール）</label>
+          <div style="display:flex;gap:6px;">
+            <input type="date" id="ms-goal" style="flex:1;" oninput="_updateMsPreview()">
+            <button class="btn btn-sm" onclick="autoFillGoalFromDdoc()" title="納入指示書の最初の納品日を使用">📋 指示書から取得</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- リードタイム設定 -->
+      <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--text-muted);text-transform:uppercase;margin:16px 0 8px;">リードタイム設定（ゴールから逆算する日数）</div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>📄 見積書 提出期限（ゴールの何日前）</label>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="number" id="ms-quote-lead" min="1" max="365" style="width:80px;" oninput="_updateMsPreview()">
+            <span style="font-size:12px;">日前</span>
+          </div>
+        </div>
+        <div class="form-field">
+          <label>📝 注文書 受領期限（ゴールの何日前）</label>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="number" id="ms-po-lead" min="1" max="365" style="width:80px;" oninput="_updateMsPreview()">
+            <span style="font-size:12px;">日前</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 実績入力 -->
+      <div style="font-size:10px;font-weight:700;letter-spacing:.08em;color:var(--text-muted);text-transform:uppercase;margin:16px 0 8px;">実績（手動確認済みの場合）</div>
+      <div class="form-row">
+        <div class="form-field">
+          <label>✅ 見積書 提出日（実績）</label>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input type="date" id="ms-quote-submitted-date" style="flex:1;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;white-space:nowrap;">
+              <input type="checkbox" id="ms-quote-submitted"> 提出済
+            </label>
+          </div>
+          <div id="ms-quote-linkage-status" style="margin-top:4px;"></div>
+        </div>
+        <div class="form-field">
+          <label>✅ 注文書 受領日（実績）</label>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <input type="date" id="ms-po-received-date" style="flex:1;">
+            <label style="display:flex;align-items:center;gap:4px;font-size:11px;cursor:pointer;white-space:nowrap;">
+              <input type="checkbox" id="ms-po-received"> 受領済
+            </label>
+          </div>
+          <div id="ms-po-linkage-status" style="margin-top:4px;"></div>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;background:#f0fdf4;border:1px solid #86efac;border-radius:var(--radius-sm);padding:10px 14px;font-size:11px;" id="ms-computed-preview">
+        <!-- 逆算結果プレビュー -->
+      </div>
+      <div class="form-field" style="margin-top:10px;">
+        <label>備考</label>
+        <input type="text" id="ms-notes" placeholder="条件・前提など">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm" onclick="closeMilestoneModal()">キャンセル</button>
+      <button class="btn btn-primary btn-sm" onclick="saveMilestoneModal()">💾 保存</button>
     </div>
   </div>
 </div>
@@ -812,6 +923,7 @@ const state = {
   customFlows:{},
   machineExtra:{},
   deliveryDocs:{},  // { machineId: [{id,docType,docNo,issueDate,lines:[{id,date,qty,destination,note}]}] }
+  milestones:{},   // { machineId: {goalDate,quoteLeadDays,poLeadDays,quoteSubmitted,poReceived,quoteSubmittedDate,poReceivedDate,notes} }
   futureModels:[], // 将来機種計画 [{id,code,name,salesDate,complianceDate,productionPlanDate,materialDate,mountingDate,deliveryDate,hallDate,memo}]
 };
 
@@ -867,6 +979,7 @@ function saveToGAS(alertDesc){
       customFlows:state.customFlows,
       machineExtra:state.machineExtra,
       deliveryDocs:state.deliveryDocs,
+      milestones:state.milestones,
       futureModels:state.futureModels,
     });
     google.script.run.saveData(json);
@@ -1646,9 +1759,16 @@ function renderDashboard(){
     });
   });
 
+  const msAlerts=getMilestoneAlerts();
   let alertHtml='';
   if(nearItems.length>0){
-    alertHtml=`<div class="alert-bar">⚠️ 直近7日以内: ${nearItems.map(i=>`【${i.id}】${i.label}(${i.diff===0?'本日':i.diff+'日後'})`).join('　')}</div>`;
+    alertHtml+=`<div class="alert-bar">⚠️ 直近7日以内: ${nearItems.map(i=>`【${i.id}】${i.label}(${i.diff===0?'本日':i.diff+'日後'})`).join('　')}</div>`;
+  }
+  if(msAlerts.length>0){
+    const urgents=msAlerts.filter(a=>a.urgent);
+    const warns=msAlerts.filter(a=>!a.urgent);
+    if(urgents.length) alertHtml+=`<div class="alert-bar" style="background:#fef2f2;border-color:#fca5a5;color:#991b1b;">🚨 期限超過: ${urgents.map(a=>`【${a.machineId}】${a.label}`).join('　')}</div>`;
+    if(warns.length) alertHtml+=`<div class="alert-bar" style="background:#fffbeb;border-color:#fcd34d;color:#92400e;">⏰ 期限14日以内: ${warns.map(a=>`【${a.machineId}】${a.label} あと${a.diff}日`).join('　')}</div>`;
   }
 
   const machineRows=MACHINES.map(m=>{
@@ -2327,6 +2447,7 @@ function renderFlow(){
         <button class="btn btn-sm" onclick="openEditModal('${m.id}')">✏️ 機種編集</button>
       </div>
     </div>
+    ${renderMilestoneSection(selId)}
     ${groupsHtml}
     ${renderDdocSection(selId)}
     <div class="table-wrap" style="margin-top:4px;">
@@ -2341,6 +2462,303 @@ function renderFlow(){
     </div>`;
 }
 
+
+/* ============================================================
+   マイルストーン / ゴール逆算スケジュール
+============================================================ */
+const MS_DEFAULTS={quoteLeadDays:60, poLeadDays:30};
+
+function _getMs(machineId){
+  if(!state.milestones[machineId]) state.milestones[machineId]={
+    goalDate:'', quoteLeadDays:MS_DEFAULTS.quoteLeadDays, poLeadDays:MS_DEFAULTS.poLeadDays,
+    quoteSubmitted:false, poReceived:false, quoteSubmittedDate:'', poReceivedDate:'', notes:'',
+  };
+  return state.milestones[machineId];
+}
+
+function _computeMs(ms){
+  if(!ms.goalDate)return{quoteDeadline:null,poDeadline:null};
+  const g=new Date(ms.goalDate); g.setHours(0,0,0,0);
+  const qd=new Date(g); qd.setDate(qd.getDate()-(ms.quoteLeadDays||MS_DEFAULTS.quoteLeadDays));
+  const pd=new Date(g); pd.setDate(pd.getDate()-(ms.poLeadDays  ||MS_DEFAULTS.poLeadDays));
+  return{quoteDeadline:fmtDate(qd), poDeadline:fmtDate(pd)};
+}
+
+// 見積管理システムから状態を検知
+function _getLinkageStatus(machineId){
+  const d=state.linkageData;
+  if(!d)return{quoteFound:false,poFound:false,quoteStatus:null,poStatus:null};
+  const estimates=(d.estimates||d.quotes||[]).filter(e=>{
+    const eid=String(e.id||e.machineId||e.modelCode||'').toUpperCase();
+    return eid===machineId.toUpperCase()||eid.includes(machineId.toUpperCase());
+  });
+  if(!estimates.length)return{quoteFound:false,poFound:false,quoteStatus:null,poStatus:null};
+  const e=estimates[0]; // 最新/最初の一致
+  // フィールド名を複数パターンで試みる
+  const quoteSubmitted=!!(e.quoteSubmitted||e.quote_submitted||e.submitted||
+    (e.status&&(e.status.includes('提出')||e.status.includes('submitted')||e.status.includes('見積済'))));
+  const poReceived=!!(e.poReceived||e.po_received||e.orderReceived||e.order_received||
+    (e.status&&(e.status.includes('注文書')||e.status.includes('受領')||e.status.includes('po')||e.status.includes('order'))));
+  const quoteDate=e.quoteDate||e.quote_date||e.submittedDate||'';
+  const poDate=e.poDate||e.po_date||e.orderDate||'';
+  return{quoteFound:true,quoteSubmitted,quoteDate,poReceived,poDate,
+    status:e.status||'', amount:e.amount||'', customer:e.customer||e.client||''};
+}
+
+function openMilestoneModal(machineId){
+  const ms=_getMs(machineId);
+  const ls=_getLinkageStatus(machineId);
+  document.getElementById('ms-machine').value=machineId;
+  document.getElementById('ms-goal').value=ms.goalDate||'';
+  document.getElementById('ms-quote-lead').value=ms.quoteLeadDays||MS_DEFAULTS.quoteLeadDays;
+  document.getElementById('ms-po-lead').value=ms.poLeadDays||MS_DEFAULTS.poLeadDays;
+  document.getElementById('ms-quote-submitted').checked=ms.quoteSubmitted||ls.quoteSubmitted||false;
+  document.getElementById('ms-po-received').checked=ms.poReceived||ls.poReceived||false;
+  document.getElementById('ms-quote-submitted-date').value=ms.quoteSubmittedDate||ls.quoteDate||'';
+  document.getElementById('ms-po-received-date').value=ms.poReceivedDate||ls.poDate||'';
+  document.getElementById('ms-notes').value=ms.notes||'';
+
+  // 見積管理システム連携ステータス表示
+  const qDiv=document.getElementById('ms-quote-linkage-status');
+  const pDiv=document.getElementById('ms-po-linkage-status');
+  if(ls.quoteFound){
+    const qTag=ls.quoteSubmitted
+      ?'<span class="linkage-tag linked">🔗 見積管理: 提出済</span>'
+      :'<span class="linkage-tag unlinked">🔗 見積管理: 未提出</span>';
+    const pTag=ls.poReceived
+      ?'<span class="linkage-tag linked">🔗 見積管理: 受領済</span>'
+      :'<span class="linkage-tag unlinked">🔗 見積管理: 未受領</span>';
+    if(qDiv)qDiv.innerHTML=qTag+(ls.customer?`<span style="font-size:10px;color:var(--text-muted);margin-left:6px;">${ls.customer}</span>`:'');
+    if(pDiv)pDiv.innerHTML=pTag+(ls.amount?`<span style="font-size:10px;color:var(--text-muted);margin-left:6px;">¥${Number(ls.amount).toLocaleString()}</span>`:'');
+  }else{
+    const unknownTag='<span class="linkage-tag unknown">🔗 見積管理: 未連携 (管理コンソールで取得)</span>';
+    if(qDiv)qDiv.innerHTML=unknownTag;
+    if(pDiv)pDiv.innerHTML='';
+  }
+
+  _updateMsPreview();
+  document.getElementById('milestone-modal').style.display='flex';
+}
+function closeMilestoneModal(){document.getElementById('milestone-modal').style.display='none';}
+
+function _updateMsPreview(){
+  const goalVal=document.getElementById('ms-goal').value;
+  const qLead=parseInt(document.getElementById('ms-quote-lead').value)||MS_DEFAULTS.quoteLeadDays;
+  const pLead=parseInt(document.getElementById('ms-po-lead').value)||MS_DEFAULTS.poLeadDays;
+  const prev=document.getElementById('ms-computed-preview');
+  if(!prev)return;
+  if(!goalVal){prev.innerHTML='<span style="color:var(--text-muted);">ゴール日を設定すると逆算日程が表示されます</span>';return;}
+  const g=new Date(goalVal);
+  const qd=new Date(g); qd.setDate(qd.getDate()-qLead);
+  const pd=new Date(g); pd.setDate(pd.getDate()-pLead);
+  const today=new Date(); today.setHours(0,0,0,0);
+  const df=(d)=>`${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}`;
+  const diff=(d)=>Math.ceil((d-today)/86400000);
+  const diffLabel=(d)=>{const n=diff(d);return n<0?`<span style="color:var(--danger);">${Math.abs(n)}日超過</span>`:n===0?'<span style="color:var(--danger);">本日</span>':`<span style="color:var(--primary);">あと${n}日</span>`;};
+  prev.innerHTML=`<div style="font-size:11px;font-weight:700;color:var(--success);margin-bottom:8px;">📐 逆算スケジュール</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;font-size:11px;">
+      <div style="text-align:center;padding:8px;background:#eff6ff;border-radius:6px;">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">📄 見積提出期限</div>
+        <div style="font-weight:700;font-family:monospace;">${df(qd)}</div>
+        <div>${diffLabel(qd)}</div>
+      </div>
+      <div style="text-align:center;padding:8px;background:#f0fdf4;border-radius:6px;">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">📝 注文書受領期限</div>
+        <div style="font-weight:700;font-family:monospace;">${df(pd)}</div>
+        <div>${diffLabel(pd)}</div>
+      </div>
+      <div style="text-align:center;padding:8px;background:#fef9c3;border-radius:6px;">
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:3px;">🎯 初回納品（ゴール）</div>
+        <div style="font-weight:700;font-family:monospace;">${df(g)}</div>
+        <div>${diffLabel(g)}</div>
+      </div>
+    </div>`;
+}
+
+function autoFillGoalFromDdoc(){
+  const machineId=document.getElementById('ms-machine').value;
+  const docs=_getDdocs?_getDdocs(machineId):[];
+  const allLines=docs.flatMap(d=>d.lines||[]).filter(l=>l.date).sort((a,b)=>a.date.localeCompare(b.date));
+  if(!allLines.length){showToast('⚠️ 納入指示書に日付データがありません');return;}
+  document.getElementById('ms-goal').value=allLines[0].date;
+  _updateMsPreview();
+  showToast(`✅ 初回納入日: ${allLines[0].date} をゴールに設定`);
+}
+
+function saveMilestoneModal(){
+  const machineId=document.getElementById('ms-machine').value;
+  const ms=_getMs(machineId);
+  ms.goalDate=document.getElementById('ms-goal').value;
+  ms.quoteLeadDays=parseInt(document.getElementById('ms-quote-lead').value)||MS_DEFAULTS.quoteLeadDays;
+  ms.poLeadDays=parseInt(document.getElementById('ms-po-lead').value)||MS_DEFAULTS.poLeadDays;
+  ms.quoteSubmitted=document.getElementById('ms-quote-submitted').checked;
+  ms.poReceived=document.getElementById('ms-po-received').checked;
+  ms.quoteSubmittedDate=document.getElementById('ms-quote-submitted-date').value;
+  ms.poReceivedDate=document.getElementById('ms-po-received-date').value;
+  ms.notes=document.getElementById('ms-notes').value.trim();
+  saveToGAS();
+  closeMilestoneModal();
+  renderPage('flow');
+  addLog(`${machineId} ゴール設定: ${ms.goalDate||'未設定'}`);
+  showToast('✅ ゴールスケジュールを保存しました');
+}
+
+// アラート収集（ダッシュボード用）
+function getMilestoneAlerts(){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const alerts=[];
+  MACHINES.forEach(m=>{
+    const ms=state.milestones[m.id]; if(!ms||!ms.goalDate)return;
+    const ls=_getLinkageStatus(m.id);
+    const {quoteDeadline,poDeadline}=_computeMs(ms);
+    const quoteOk=ms.quoteSubmitted||ls.quoteSubmitted;
+    const poOk=ms.poReceived||ls.poReceived;
+    if(quoteDeadline&&!quoteOk){
+      const diff=Math.ceil((new Date(quoteDeadline)-today)/86400000);
+      if(diff<=14) alerts.push({machineId:m.id,type:'quote',diff,deadline:quoteDeadline,label:'見積書未提出',urgent:diff<=0});
+    }
+    if(poDeadline&&!poOk){
+      const diff=Math.ceil((new Date(poDeadline)-today)/86400000);
+      if(diff<=14) alerts.push({machineId:m.id,type:'po',diff,deadline:poDeadline,label:'注文書未受領',urgent:diff<=0});
+    }
+  });
+  return alerts;
+}
+
+function renderMilestoneSection(machineId){
+  const ms=_getMs(machineId);
+  const ls=_getLinkageStatus(machineId);
+  const today=new Date(); today.setHours(0,0,0,0);
+
+  // ゴールまでの日数
+  const goalDiff=ms.goalDate?Math.ceil((new Date(ms.goalDate)-today)/86400000):null;
+
+  if(!ms.goalDate){
+    return `<div class="milestone-section">
+      <div class="milestone-header">
+        <h4>🎯 ゴール逆算スケジュール</h4>
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);" onclick="openMilestoneModal('${machineId}')">＋ ゴール日を設定</button>
+      </div>
+      <div style="padding:24px;text-align:center;color:var(--text-muted);font-size:12px;">ゴール日（初回納品日）を設定すると見積書・注文書の逆算スケジュールが表示されます</div>
+    </div>`;
+  }
+
+  const{quoteDeadline,poDeadline}=_computeMs(ms);
+  const quoteOk=ms.quoteSubmitted||ls.quoteSubmitted;
+  const poOk=ms.poReceived||ls.poReceived;
+
+  // タイムライン上の位置（%）計算
+  const span=Math.max(ms.quoteLeadDays||60,90); // 表示期間
+  const pinPos=(date)=>{
+    if(!date)return 0;
+    const d=new Date(date);
+    const goalD=new Date(ms.goalDate);
+    const startD=new Date(goalD); startD.setDate(startD.getDate()-span);
+    const total=goalD-startD;
+    const offset=d-startD;
+    return Math.max(0,Math.min(100,Math.round(offset/total*100)));
+  };
+  const todayPct=pinPos(fmtDate(today));
+  const quotePct=pinPos(quoteDeadline);
+  const poPct=pinPos(poDeadline);
+
+  // 各ピンの色
+  const quoteColor=quoteOk?'#16a34a':quoteDeadline&&new Date(quoteDeadline)<today?'#dc2626':'#2563eb';
+  const poColor=poOk?'#16a34a':poDeadline&&new Date(poDeadline)<today?'#dc2626':'#d97706';
+  const goalColor=goalDiff!==null&&goalDiff<0?'#dc2626':goalDiff!==null&&goalDiff<=30?'#d97706':'#7c3aed';
+
+  const fmtShort=(d)=>{if(!d)return'';const dt=new Date(d);return`${dt.getMonth()+1}/${dt.getDate()}`;};
+
+  const qDiff=quoteDeadline?Math.ceil((new Date(quoteDeadline)-today)/86400000):null;
+  const pDiff=poDeadline?Math.ceil((new Date(poDeadline)-today)/86400000):null;
+  const diffStr=(d,ok)=>ok?'<span style="color:var(--success);">✅ 完了</span>':d===null?'—':d<0?`<span style="color:var(--danger);font-weight:700;">⚠️ ${Math.abs(d)}日超過</span>`:d===0?'<span style="color:var(--danger);font-weight:700;">⚠️ 本日期限</span>':`あと<span class="ms-counter">${d}</span>日`;
+
+  const quoteCardClass=quoteOk?'ok':qDiff!==null&&qDiff<=7?'alert':qDiff!==null&&qDiff<=14?'warn':'';
+  const poCardClass=poOk?'ok':pDiff!==null&&pDiff<=7?'alert':pDiff!==null&&pDiff<=14?'warn':'';
+
+  // 見積管理連携タグ
+  const linkageHtml=ls.quoteFound
+    ?`<span class="linkage-tag linked">🔗 見積管理連携済</span> <span style="font-size:10px;color:var(--text-sub);">${ls.customer}${ls.amount?' ¥'+Number(ls.amount).toLocaleString():''}</span>`
+    :`<span class="linkage-tag unknown">🔗 見積管理: 未連携</span>`;
+
+  return `<div class="milestone-section">
+    <div class="milestone-header" style="justify-content:space-between;">
+      <div>
+        <h4 style="margin-bottom:2px;">🎯 ゴール逆算スケジュール</h4>
+        <div style="font-size:10px;color:rgba(255,255,255,.6);">初回納品まで <strong style="font-size:14px;color:${goalDiff!==null&&goalDiff<=30?'#fbbf24':'#fff'};">${goalDiff!==null?goalDiff+'日':'—'}</strong></div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;">
+        ${linkageHtml}
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);" onclick="openMilestoneModal('${machineId}')">⚙️ 設定</button>
+      </div>
+    </div>
+    <div class="milestone-body">
+      <!-- タイムライン -->
+      <div style="position:relative;margin:0 8px 0;">
+        <div class="timeline-track">
+          <div class="timeline-fill" style="width:${todayPct}%;"></div>
+          <!-- 今日 -->
+          <div class="timeline-pin" style="left:${todayPct}%;">
+            <div style="font-size:9px;position:absolute;bottom:10px;white-space:nowrap;transform:translateX(-50%);color:var(--text-muted);">TODAY</div>
+            <div class="timeline-pin-dot" style="background:#94a3b8;"></div>
+          </div>
+          <!-- 見積期限 -->
+          <div class="timeline-pin" style="left:${quotePct}%;">
+            <div class="timeline-pin-dot" style="background:${quoteColor};"></div>
+            <div class="timeline-pin-label" style="color:${quoteColor};">📄 見積<br>${fmtShort(quoteDeadline)}</div>
+          </div>
+          <!-- 注文書期限 -->
+          <div class="timeline-pin" style="left:${poPct}%;">
+            <div class="timeline-pin-dot" style="background:${poColor};"></div>
+            <div class="timeline-pin-sub" style="color:${poColor};">📝 注文書<br>${fmtShort(poDeadline)}</div>
+          </div>
+          <!-- ゴール -->
+          <div class="timeline-pin" style="left:100%;">
+            <div class="timeline-pin-dot" style="background:${goalColor};width:18px;height:18px;"></div>
+            <div class="timeline-pin-label" style="color:${goalColor};font-weight:800;">🎯 ${fmtShort(ms.goalDate)}</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- カード -->
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:8px;">
+
+        <div class="milestone-card ${quoteCardClass}">
+          <div class="milestone-icon">${quoteOk?'✅':'📄'}</div>
+          <div class="milestone-info">
+            <h5>見積書 提出</h5>
+            <div class="date-row">${quoteDeadline?fmtShort(quoteDeadline)+` (${quoteDeadline})`:'未設定'}</div>
+            <div class="status-row">${diffStr(qDiff,quoteOk)}</div>
+            ${ms.quoteSubmittedDate?`<div style="font-size:10px;color:var(--text-sub);margin-top:3px;">提出日: ${ms.quoteSubmittedDate}</div>`:''}
+            ${ls.quoteFound&&!ms.quoteSubmitted?`<div style="margin-top:5px;">${ls.quoteSubmitted?'<span class="linkage-tag linked">見積管理: 提出済</span>':'<span class="linkage-tag unlinked">見積管理: 未提出</span>'}</div>`:''}
+          </div>
+        </div>
+
+        <div class="milestone-card ${poCardClass}">
+          <div class="milestone-icon">${poOk?'✅':'📝'}</div>
+          <div class="milestone-info">
+            <h5>注文書 受領</h5>
+            <div class="date-row">${poDeadline?fmtShort(poDeadline)+` (${poDeadline})`:'未設定'}</div>
+            <div class="status-row">${diffStr(pDiff,poOk)}</div>
+            ${ms.poReceivedDate?`<div style="font-size:10px;color:var(--text-sub);margin-top:3px;">受領日: ${ms.poReceivedDate}</div>`:''}
+            ${ls.quoteFound&&!ms.poReceived?`<div style="margin-top:5px;">${ls.poReceived?'<span class="linkage-tag linked">見積管理: 受領済</span>':'<span class="linkage-tag unlinked">見積管理: 未受領</span>'}</div>`:''}
+          </div>
+        </div>
+
+        <div class="milestone-card ${goalDiff!==null&&goalDiff<=30&&goalDiff>0?'warn':goalDiff!==null&&goalDiff<=0?'alert':'ok'}" style="border-left:4px solid ${goalColor};">
+          <div class="milestone-icon">🎯</div>
+          <div class="milestone-info">
+            <h5>初回納品（ゴール）</h5>
+            <div class="date-row">${ms.goalDate}</div>
+            <div class="status-row">${diffStr(goalDiff,false).replace('あと','残り')}</div>
+            ${ms.notes?`<div style="font-size:10px;color:var(--text-sub);margin-top:3px;">${ms.notes}</div>`:''}
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>`;
+}
 
 /* ============================================================
    生産計画書 / 納入指示書 管理
@@ -3027,6 +3445,7 @@ function _init(saved){
       if(s.customFlows)state.customFlows=s.customFlows;
       if(s.machineExtra)Object.assign(state.machineExtra,s.machineExtra);
       if(s.deliveryDocs)Object.assign(state.deliveryDocs,s.deliveryDocs);
+      if(s.milestones)Object.assign(state.milestones,s.milestones);
       if(s.futureModels)state.futureModels=s.futureModels;
     }catch(e){}
   }
