@@ -181,6 +181,10 @@ function _checkAlerts(state) {
       });
     });
   }
+
+  // マイルストーン警告（見積提出・注文書受領）
+  _checkMilestoneAlerts(state, alerts);
+
   return alerts;
 }
 
@@ -201,6 +205,7 @@ function _buildDailySummaryHtml(state) {
 
   var schedAlerts = alerts.filter(function(a){return a.type==='schedule';});
   var ecoAlerts   = alerts.filter(function(a){return a.type==='eco';});
+  var msAlerts    = alerts.filter(function(a){return a.type==='milestone';});
 
   var schedRows = schedAlerts.map(function(a) {
     return '<tr>' +
@@ -256,6 +261,23 @@ function _buildDailySummaryHtml(state) {
         '</table>'
         : ''
       ) +
+      // Milestone alerts
+      (msAlerts.length > 0 ?
+        '<div style="font-size:13px;font-weight:700;color:#dc2626;margin-bottom:8px;">🚨 見積・注文書 期限アラート (' + msAlerts.length + '件)</div>' +
+        '<table style="width:100%;border-collapse:collapse;margin-bottom:20px;font-size:12px;">' +
+          '<tr style="background:#f8fafc;"><th style="padding:6px 12px;text-align:left;font-size:11px;border-bottom:2px solid #e8eaed;">機種</th><th style="padding:6px 12px;text-align:left;font-size:11px;border-bottom:2px solid #e8eaed;">項目</th><th style="padding:6px 12px;text-align:left;font-size:11px;border-bottom:2px solid #e8eaed;">期限</th><th style="padding:6px 12px;text-align:left;font-size:11px;border-bottom:2px solid #e8eaed;">状況</th></tr>' +
+          msAlerts.map(function(a){
+            return '<tr>' +
+              '<td style="padding:7px 12px;border-bottom:1px solid #e8eaed;font-weight:700;">' + a.id + '</td>' +
+              '<td style="padding:7px 12px;border-bottom:1px solid #e8eaed;">' + a.label + '</td>' +
+              '<td style="padding:7px 12px;border-bottom:1px solid #e8eaed;font-family:monospace;">' + a.deadline + '</td>' +
+              '<td style="padding:7px 12px;border-bottom:1px solid #e8eaed;font-weight:700;color:' + (a.urgent?'#dc2626':'#d97706') + ';">' +
+                (a.urgent ? '🔴 '+Math.abs(a.diff)+'日超過' : '⚠️ あと'+a.diff+'日') +
+              '</td></tr>';
+          }).join('') +
+        '</table>'
+        : ''
+      ) +
     '</div>' +
     // Footer
     '<div style="background:#f8fafc;padding:12px 24px;border-radius:0 0 10px 10px;border:1px solid #e8eaed;border-top:none;">' +
@@ -269,4 +291,50 @@ function _buildAlertHtml(state, changeDesc, alerts) {
   // サマリーHTMLのヘッダーを変更して再利用
   return _buildDailySummaryHtml(state)
     .replace('日次サマリー', '更新通知: ' + (changeDesc||'変更あり'));
+}
+
+/* ============================================================
+   マイルストーン アラート拡張（_checkAlerts に統合）
+   ※ _checkAlerts 内の return alerts; の前に呼ぶ
+   ============================================================ */
+function _checkMilestoneAlerts(state, alerts) {
+  var today = new Date(); today.setHours(0,0,0,0);
+  var ms = state.milestones || {};
+
+  Object.keys(ms).forEach(function(machineId) {
+    var m = ms[machineId];
+    if (!m || !m.goalDate) return;
+
+    var goalD = new Date(m.goalDate); goalD.setHours(0,0,0,0);
+    var qLead = m.quoteLeadDays || 60;
+    var pLead = m.poLeadDays    || 30;
+
+    var qDeadline = new Date(goalD); qDeadline.setDate(qDeadline.getDate() - qLead);
+    var pDeadline = new Date(goalD); pDeadline.setDate(pDeadline.getDate() - pLead);
+
+    var quoteOk = m.quoteSubmitted || false;
+    var poOk    = m.poReceived     || false;
+
+    var qDiff = Math.ceil((qDeadline - today) / 86400000);
+    var pDiff = Math.ceil((pDeadline - today) / 86400000);
+
+    // 14日以内 or 超過
+    if (!quoteOk && qDiff <= 14) {
+      alerts.push({
+        type: 'milestone', subtype: 'quote',
+        id: machineId, label: '見積書未提出',
+        deadline: Utilities.formatDate(qDeadline, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+        diff: qDiff, urgent: qDiff <= 0,
+      });
+    }
+    if (!poOk && pDiff <= 14) {
+      alerts.push({
+        type: 'milestone', subtype: 'po',
+        id: machineId, label: '注文書未受領',
+        deadline: Utilities.formatDate(pDeadline, Session.getScriptTimeZone(), 'yyyy-MM-dd'),
+        diff: pDiff, urgent: pDiff <= 0,
+      });
+    }
+  });
+  return alerts;
 }
