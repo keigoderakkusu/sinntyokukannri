@@ -49,6 +49,44 @@ function getLinkageData(url) {
 }
 
 /* ============================================================
+   DRIVE FILE UPLOAD
+============================================================ */
+function uploadFileToDrive(fileName, base64Data, mimeType, machineId) {
+  try {
+    var FOLDER_NAME = '営業進捗管理_添付ファイル';
+    var folders = DriveApp.getFoldersByName(FOLDER_NAME);
+    var rootFolder = folders.hasNext() ? folders.next() : DriveApp.createFolder(FOLDER_NAME);
+
+    var machineFolders = rootFolder.getFoldersByName(machineId);
+    var machineFolder = machineFolders.hasNext() ? machineFolders.next() : rootFolder.createFolder(machineId);
+
+    var bytes = Utilities.base64Decode(base64Data);
+    var blob = Utilities.newBlob(bytes, mimeType, fileName);
+    var file = machineFolder.createFile(blob);
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+    return JSON.stringify({
+      success: true,
+      fileId: file.getId(),
+      fileName: fileName,
+      url: 'https://drive.google.com/file/d/' + file.getId() + '/view',
+      uploadedAt: Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm'),
+    });
+  } catch (e) {
+    return JSON.stringify({ success: false, error: e.message });
+  }
+}
+
+function deleteFileFromDrive(fileId) {
+  try {
+    DriveApp.getFileById(fileId).setTrashed(true);
+    return JSON.stringify({ success: true });
+  } catch (e) {
+    return JSON.stringify({ success: false, error: e.message });
+  }
+}
+
+/* ============================================================
    EMAIL NOTIFICATION
 ============================================================ */
 

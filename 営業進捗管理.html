@@ -924,6 +924,7 @@ const state = {
   machineExtra:{},
   deliveryDocs:{},  // { machineId: [{id,docType,docNo,issueDate,lines:[{id,date,qty,destination,note}]}] }
   milestones:{},   // { machineId: {goalDate,quoteLeadDays,poLeadDays,quoteSubmitted,poReceived,quoteSubmittedDate,poReceivedDate,notes} }
+  driveFiles:{},   // { machineId: [{fileId,fileName,url,uploadedAt}] }
   futureModels:[], // 将来機種計画 [{id,code,name,salesDate,complianceDate,productionPlanDate,materialDate,mountingDate,deliveryDate,hallDate,memo}]
 };
 
@@ -1313,18 +1314,117 @@ function renderLinkageData(){
     div.innerHTML=`<div style="color:var(--text-muted);font-size:12px;"><pre>${JSON.stringify(d,null,2).substring(0,400)}</pre></div>`;
     return;
   }
-  const rows=estimates.map(e=>`
-    <tr>
-      <td>${e.id||e.machineId||'—'}</td>
+  const rows=estimates.map(e=>{
+    const quoteUrl=e.url||e.quoteUrl||'';
+    const orderUrl=e.orderUrl||'';
+    return`<tr>
+      <td><strong>${e.id||e.machineId||'—'}</strong></td>
       <td>${e.customer||e.client||'—'}</td>
       <td>${e.amount?'¥'+Number(e.amount).toLocaleString():'—'}</td>
       <td>${badgeHtml(e.status||'—')}</td>
-    </tr>`).join('');
+      <td style="white-space:nowrap;">
+        ${quoteUrl?`<a href="${quoteUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:#fff;background:#2563eb;padding:2px 8px;border-radius:5px;text-decoration:none;margin-right:4px;">📄 見積書</a>`:''}
+        ${orderUrl?`<a href="${orderUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;color:#fff;background:#16a34a;padding:2px 8px;border-radius:5px;text-decoration:none;">📝 注文書</a>`:''}
+        ${!quoteUrl&&!orderUrl?'<span style="color:var(--text-muted);font-size:11px;">—</span>':''}
+      </td>
+    </tr>`;
+  }).join('');
   div.innerHTML=`
     <table style="width:auto;">
-      <thead><tr><th>機種</th><th>顧客</th><th>見積金額</th><th>ステータス</th></tr></thead>
+      <thead><tr><th>機種</th><th>顧客</th><th>見積金額</th><th>ステータス</th><th>書類PDF</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
+}
+
+/* ============================================================
+   DRIVE FILE UPLOAD
+============================================================ */
+function _getDriveFiles(machineId){
+  if(!state.driveFiles[machineId])state.driveFiles[machineId]=[];
+  return state.driveFiles[machineId];
+}
+
+function handleDriveUpload(event, machineId){
+  const file=event.target.files[0];
+  if(!file)return;
+  event.target.value='';
+  if(file.size>20*1024*1024){showToast('⚠️ ファイルサイズは20MB以下にしてください');return;}
+  showToast('📤 アップロード中...');
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const base64=ev.target.result.split(',')[1];
+    if(typeof google!=='undefined'&&google.script){
+      google.script.run
+        .withSuccessHandler(res=>{
+          try{
+            const r=JSON.parse(res);
+            if(r.success){
+              _getDriveFiles(machineId).push({fileId:r.fileId,fileName:r.fileName,url:r.url,uploadedAt:r.uploadedAt});
+              saveToGAS();
+              showToast('✅ アップロード完了: '+r.fileName);
+              if(document.getElementById('drive-files-'+machineId))renderDriveFilesSection(machineId,true);
+              renderDashboard();
+            }else{showToast('⚠️ '+r.error);}
+          }catch(e){showToast('⚠️ レスポンスエラー');}
+        })
+        .withFailureHandler(err=>showToast('⚠️ '+err.message))
+        .uploadFileToDrive(file.name, base64, file.type||'application/octet-stream', machineId);
+    }else{showToast('⚠️ GAS環境でのみアップロード可能です');}
+  };
+  reader.readAsDataURL(file);
+}
+
+function deleteDriveFile(machineId, fileId){
+  if(!confirm('このファイルをDriveから削除しますか？'))return;
+  const files=_getDriveFiles(machineId);
+  const idx=files.findIndex(f=>f.fileId===fileId);
+  if(idx<0)return;
+  if(typeof google!=='undefined'&&google.script){
+    google.script.run
+      .withSuccessHandler(()=>{})
+      .withFailureHandler(()=>{})
+      .deleteFileFromDrive(fileId);
+  }
+  files.splice(idx,1);
+  saveToGAS();
+  showToast('🗑️ 削除しました');
+  if(document.getElementById('drive-files-'+machineId))renderDriveFilesSection(machineId,true);
+  renderDashboard();
+}
+
+function renderDriveFilesSection(machineId, updateOnly){
+  const files=_getDriveFiles(machineId);
+  const html=`
+    <div class="ddoc-card">
+      <div class="ddoc-header" style="display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span style="font-size:14px;">📎</span>
+          <strong style="font-size:13px;">添付ファイル（Drive）</strong>
+          ${files.length?`<span class="badge badge-info" style="font-size:10px;">${files.length}件</span>`:''}
+        </div>
+        <label class="btn btn-sm btn-primary" style="cursor:pointer;margin:0;">
+          ＋ ファイルを追加
+          <input type="file" accept=".pdf,.xlsx,.xls,.png,.jpg,.jpeg,.doc,.docx" style="display:none"
+            onchange="handleDriveUpload(event,'${machineId}')">
+        </label>
+      </div>
+      ${files.length===0?`<div style="padding:16px 20px;color:var(--text-muted);font-size:12px;text-align:center;">添付ファイルなし。「ファイルを追加」でDriveにアップロード</div>`:`
+      <table class="ddoc-line-tbl">
+        <thead><tr><th>ファイル名</th><th>アップロード日時</th><th></th></tr></thead>
+        <tbody>
+          ${files.map(f=>`<tr>
+            <td><a href="${f.url}" target="_blank" style="color:var(--primary);font-weight:600;text-decoration:none;">📄 ${f.fileName}</a></td>
+            <td style="font-size:11px;color:var(--text-sub);">${f.uploadedAt||'—'}</td>
+            <td><button class="btn btn-sm btn-danger" onclick="deleteDriveFile('${machineId}','${f.fileId}')" title="削除">🗑️</button></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>`}
+    </div>`;
+  if(updateOnly){
+    const el=document.getElementById('drive-files-'+machineId);
+    if(el)el.outerHTML=`<div id="drive-files-${machineId}">${html}</div>`;
+  }
+  return `<div id="drive-files-${machineId}">${html}</div>`;
 }
 
 /* ============================================================
@@ -1786,7 +1886,14 @@ function renderDashboard(){
       <td style="font-size:11px;color:var(--text-sub);" class="inline-editable"
         ondblclick="inlineEditDate(this,'${m.id}','notes_unused')"
         title="ダブルクリックで編集">${state.notes[m.id]||''}</td>
-      <td onclick="event.stopPropagation()"><button class="btn btn-sm" onclick="openEditModal('${m.id}')">編集</button></td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap;">
+        <button class="btn btn-sm" onclick="openEditModal('${m.id}')">編集</button>
+        <label class="btn btn-sm" style="cursor:pointer;margin-left:4px;" title="Driveにファイルをアップロード">
+          📎${(_getDriveFiles(m.id).length>0?` <span style="background:var(--primary);color:#fff;border-radius:8px;font-size:10px;padding:0 5px;">${_getDriveFiles(m.id).length}</span>`:'')}
+          <input type="file" accept=".pdf,.xlsx,.xls,.png,.jpg,.jpeg,.doc,.docx" style="display:none"
+            onchange="handleDriveUpload(event,'${m.id}')">
+        </label>
+      </td>
     </tr>`;
   }).join('');
 
@@ -2450,6 +2557,7 @@ function renderFlow(){
     ${renderMilestoneSection(selId)}
     ${groupsHtml}
     ${renderDdocSection(selId)}
+    ${renderDriveFilesSection(selId)}
     <div class="table-wrap" style="margin-top:4px;">
       <div style="padding:16px 20px;">
         <div class="detail-section" style="margin-bottom:0;"><h4>備考・メモ</h4>
@@ -2501,8 +2609,11 @@ function _getLinkageStatus(machineId){
     (e.status&&(e.status.includes('注文書')||e.status.includes('受領')||e.status.includes('po')||e.status.includes('order'))));
   const quoteDate=e.quoteDate||e.quote_date||e.submittedDate||'';
   const poDate=e.poDate||e.po_date||e.orderDate||'';
+  const quoteUrl=e.url||e.quoteUrl||e.quote_url||e.見積書URL||'';
+  const orderUrl=e.orderUrl||e.order_url||e.注文書URL||'';
   return{quoteFound:true,quoteSubmitted,quoteDate,poReceived,poDate,
-    status:e.status||'', amount:e.amount||'', customer:e.customer||e.client||''};
+    status:e.status||'', amount:e.amount||'', customer:e.customer||e.client||'',
+    quoteUrl, orderUrl};
 }
 
 function openMilestoneModal(machineId){
@@ -2731,6 +2842,7 @@ function renderMilestoneSection(machineId){
             <div class="status-row">${diffStr(qDiff,quoteOk)}</div>
             ${ms.quoteSubmittedDate?`<div style="font-size:10px;color:var(--text-sub);margin-top:3px;">提出日: ${ms.quoteSubmittedDate}</div>`:''}
             ${ls.quoteFound&&!ms.quoteSubmitted?`<div style="margin-top:5px;">${ls.quoteSubmitted?'<span class="linkage-tag linked">見積管理: 提出済</span>':'<span class="linkage-tag unlinked">見積管理: 未提出</span>'}</div>`:''}
+            ${ls.quoteUrl?`<div style="margin-top:6px;"><a href="${ls.quoteUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#fff;background:#2563eb;padding:3px 10px;border-radius:6px;text-decoration:none;">📄 見積書PDF</a></div>`:''}
           </div>
         </div>
 
@@ -2742,6 +2854,7 @@ function renderMilestoneSection(machineId){
             <div class="status-row">${diffStr(pDiff,poOk)}</div>
             ${ms.poReceivedDate?`<div style="font-size:10px;color:var(--text-sub);margin-top:3px;">受領日: ${ms.poReceivedDate}</div>`:''}
             ${ls.quoteFound&&!ms.poReceived?`<div style="margin-top:5px;">${ls.poReceived?'<span class="linkage-tag linked">見積管理: 受領済</span>':'<span class="linkage-tag unlinked">見積管理: 未受領</span>'}</div>`:''}
+            ${ls.orderUrl?`<div style="margin-top:6px;"><a href="${ls.orderUrl}" target="_blank" style="display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:700;color:#fff;background:#16a34a;padding:3px 10px;border-radius:6px;text-decoration:none;">📝 注文書PDF</a></div>`:''}
           </div>
         </div>
 
@@ -3447,6 +3560,7 @@ function _init(saved){
       if(s.deliveryDocs)Object.assign(state.deliveryDocs,s.deliveryDocs);
       if(s.milestones)Object.assign(state.milestones,s.milestones);
       if(s.futureModels)state.futureModels=s.futureModels;
+      if(s.driveFiles)Object.assign(state.driveFiles,s.driveFiles);
     }catch(e){}
   }
   updateEcoBadge();
