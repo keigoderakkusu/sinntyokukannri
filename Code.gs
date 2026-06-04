@@ -36,15 +36,50 @@ function getLinkageData(url) {
   if (!url) return null;
   try {
     var sep = url.indexOf('?') >= 0 ? '&' : '?';
-    var res = UrlFetchApp.fetch(url + sep + 'action=getForLink', {
+    var fetchUrl = url + sep + 'action=getForLink';
+    var res = UrlFetchApp.fetch(fetchUrl, {
       muteHttpExceptions: true,
       followRedirects: true,
     });
-    if (res.getResponseCode() === 200) return res.getContentText();
-    return null;
+    var code = res.getResponseCode();
+    var body = res.getContentText();
+
+    if (code === 200) {
+      // レスポンスがJSONか確認
+      try {
+        JSON.parse(body);
+        return body;
+      } catch(e) {
+        // HTMLが返ってきた場合（ログインページなど）
+        return JSON.stringify({
+          __error: true,
+          code: code,
+          message: 'レスポンスがJSONではありません。ログインページにリダイレクトされた可能性があります。',
+          hint: 'GASのデプロイ設定を「全員（匿名ユーザーを含む）」に変更してください。',
+          bodyExcerpt: body.substring(0, 200),
+        });
+      }
+    }
+
+    Logger.log('getLinkageData HTTP ' + code + ': ' + body.substring(0, 200));
+    return JSON.stringify({
+      __error: true,
+      code: code,
+      message: 'HTTPエラー: ' + code,
+      hint: code === 401 || code === 302
+        ? 'GASのデプロイが「ドメイン内ユーザーのみ」に制限されています。「全員（匿名ユーザーを含む）」に変更してください。'
+        : code === 404 ? 'URLが見つかりません。デプロイURLを確認してください。'
+        : 'URLまたはデプロイ設定を確認してください。',
+      bodyExcerpt: body.substring(0, 200),
+    });
   } catch (e) {
     Logger.log('getLinkageData error: ' + e.message);
-    return null;
+    return JSON.stringify({
+      __error: true,
+      code: 0,
+      message: 'ネットワークエラー: ' + e.message,
+      hint: 'URLの形式を確認してください。',
+    });
   }
 }
 
