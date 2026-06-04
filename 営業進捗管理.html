@@ -308,6 +308,16 @@ select:focus{border-color:var(--primary);}
 .linkage-item{padding:10px 14px;border-bottom:1px solid var(--border-light);display:flex;align-items:center;justify-content:space-between;font-size:12px;}
 .linkage-item:last-child{border-bottom:none;}
 
+/* PDF link buttons */
+.pdf-link-btn{display:inline-flex;align-items:center;gap:3px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:5px;text-decoration:none;margin-right:4px;color:#fff;}
+.pdf-blue{background:#2563eb;}.pdf-blue:hover{background:#1d4ed8;}
+.pdf-green{background:#16a34a;}.pdf-green:hover{background:#15803d;}
+
+/* Estimates section */
+.estimates-section{background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius);margin-bottom:12px;overflow:hidden;}
+.estimates-section-head{display:flex;align-items:center;justify-content:space-between;padding:10px 16px;background:linear-gradient(135deg,#1e3a5f,#0f1729);border-bottom:1px solid var(--border-light);}
+.estimates-section-head h4{color:#fff;font-size:13px;font-weight:700;margin:0;display:flex;align-items:center;gap:8px;}
+
 /* Print */
 @media print{
   #sidebar,#topbar,.topbar-actions,.btn,.filter-bar,.modal-overlay,#toast,.export-wrap{display:none !important;}
@@ -844,6 +854,33 @@ select:focus{border-color:var(--primary);}
   </div>
 </div>
 
+<!-- 見積書・注文書 URL 編集モーダル -->
+<div class="modal-overlay" id="est-url-modal" style="display:none" onclick="if(event.target===this)closeEstimateUrlModal()">
+  <div class="modal" style="max-width:480px;">
+    <div class="modal-head">
+      <h3>🔗 書類PDFリンク 設定</h3>
+      <button class="modal-close" onclick="closeEstimateUrlModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:#1e40af;">
+        ℹ️ 見積書・注文書PDFのGoogle DriveリンクやURL を入力してください。空白にすると非表示になります。
+      </div>
+      <div class="form-field" style="margin-bottom:12px;">
+        <label>📄 見積書PDF URL</label>
+        <input type="text" id="est-url-quote" placeholder="https://drive.google.com/file/d/..." style="width:100%;">
+      </div>
+      <div class="form-field">
+        <label>📝 注文書PDF URL</label>
+        <input type="text" id="est-url-order" placeholder="https://drive.google.com/file/d/..." style="width:100%;">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeEstimateUrlModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="saveEstimateUrlModal()">💾 保存</button>
+    </div>
+  </div>
+</div>
+
 <script>
 /* ============================================================
    DATA
@@ -918,8 +955,9 @@ const state = {
   logs:[],
   selectedMachine:'D59B',
   flowMachine:MACHINES[0].id,
-  config:{linkageUrl:'', notifyEmail:'', notifyThreshold:50, appUrl:''},
+  config:{linkageUrl:'', notifyEmail:'', notifyThreshold:50, appUrl:'', linkageSheetId:'', linkageSheetName:'', tabSettings:{}},
   linkageData:null,
+  linkageUrlOverrides:{}, // { "machineId_rowKey": {quoteUrl, orderUrl} }
   customFlows:{},
   machineExtra:{},
   deliveryDocs:{},  // { machineId: [{id,docType,docNo,issueDate,lines:[{id,date,qty,destination,note}]}] }
@@ -953,6 +991,13 @@ function updateEcoBadge(){
     s+Object.entries(eco).filter(([k])=>k!=='delivered').reduce((a,[,v])=>a+v,0),0);
   const el=document.getElementById('eco-badge');
   if(el){el.textContent=total;el.style.display=total>0?'':'none';}
+}
+
+function toggleDashEstimates(ev, machineId){
+  ev.stopPropagation();
+  const row=document.getElementById('dash-est-'+machineId);
+  if(!row)return;
+  row.style.display=row.style.display==='none'?'':'none';
 }
 
 function badgeHtml(status){
@@ -1265,6 +1310,136 @@ function setupDailyTrigger(){
     .setupDailyTrigger();
 }
 
+/* ============================================================
+   TAB (SIDEBAR) MANAGEMENT
+============================================================ */
+const TAB_DEFS=[
+  {id:'dashboard',icon:'🏠',defaultLabel:'ダッシュボード',section:'main',required:true},
+  {id:'schedule', icon:'📅',defaultLabel:'スケジュール',  section:'main'},
+  {id:'eco',      icon:'♻️',defaultLabel:'エコフロー',    section:'main'},
+  {id:'flow',     icon:'🔄',defaultLabel:'業務フロー',    section:'main'},
+  {id:'future',   icon:'🔭',defaultLabel:'将来機種計画',  section:'main'},
+  {id:'admin',    icon:'⚙️',defaultLabel:'管理コンソール',section:'admin',required:true},
+  {id:'log',      icon:'📝',defaultLabel:'更新ログ',      section:'admin'},
+];
+
+function applyTabSettings(){
+  const s=state.config.tabSettings||{};
+  TAB_DEFS.forEach(t=>{
+    const el=document.querySelector(`.nav-item[data-page="${t.id}"]`);
+    if(!el)return;
+    el.style.display=(s[t.id]&&s[t.id].hidden&&!t.required)?'none':'';
+    const labelEl=el.querySelector('.nav-item-label');
+    if(labelEl)labelEl.textContent=(s[t.id]&&s[t.id].label)||t.defaultLabel;
+    const iconEl=el.querySelector('.nav-item-icon');
+    if(iconEl)iconEl.textContent=(s[t.id]&&s[t.id].icon)||t.icon;
+  });
+}
+
+function saveTabSettings(){
+  const s={};
+  TAB_DEFS.forEach(t=>{
+    const hidden=document.getElementById('tab-hidden-'+t.id);
+    const label=document.getElementById('tab-label-'+t.id);
+    const icon=document.getElementById('tab-icon-'+t.id);
+    s[t.id]={
+      hidden:hidden?hidden.checked:false,
+      label:label?label.value.trim()||t.defaultLabel:t.defaultLabel,
+      icon:icon?icon.value.trim()||t.icon:t.icon,
+    };
+  });
+  state.config.tabSettings=s;
+  saveToGAS();
+  applyTabSettings();
+  showToast('✅ タブ設定を保存しました');
+}
+
+function resetTabSettings(){
+  if(!confirm('タブ設定を初期状態に戻しますか？'))return;
+  state.config.tabSettings={};
+  saveToGAS();
+  applyTabSettings();
+  renderAdmin();
+  showToast('↩️ タブ設定をリセットしました');
+}
+
+/* ============================================================
+   ESTIMATES PER MACHINE
+============================================================ */
+function getEstimatesForMachine(machineId){
+  if(!state.linkageData)return[];
+  const all=(state.linkageData.estimates||state.linkageData.quotes||[]);
+  const mid=machineId.trim().toUpperCase();
+  return all.filter(e=>{
+    const eid=String(e.id||e.machineId||'').trim().toUpperCase();
+    return eid===mid||eid.startsWith(mid)||mid.startsWith(eid);
+  });
+}
+
+function renderEstimatesTable(machineId){
+  const estimates=getEstimatesForMachine(machineId);
+  if(!estimates.length){
+    if(!state.linkageData)return`<div style="font-size:12px;color:var(--text-muted);padding:10px 0;">見積管理システム未連携（管理コンソール → 見積管理システム連携で設定）</div>`;
+    return`<div style="font-size:12px;color:var(--text-muted);padding:10px 0;">この機種の見積データなし</div>`;
+  }
+  const overrides=state.linkageUrlOverrides||{};
+  const rows=estimates.map((e,i)=>{
+    const rk=e.rowIndex||i;
+    const key=machineId+'_'+rk;
+    const ov=overrides[key]||{};
+    const quoteUrl=ov.quoteUrl!==undefined?ov.quoteUrl:(e.url||e.quoteUrl||'');
+    const orderUrl=ov.orderUrl!==undefined?ov.orderUrl:(e.orderUrl||'');
+    const label=e.quoteNo||e.orderNo||e.memo||'—';
+    return`<tr>
+      <td style="font-size:12px;">${label}</td>
+      <td style="font-size:12px;">${e.customer||'—'}</td>
+      <td style="font-size:12px;font-weight:700;font-family:monospace;">${e.amount?'¥'+Number(e.amount).toLocaleString():'—'}</td>
+      <td>${badgeHtml(e.status||'—')}</td>
+      <td style="white-space:nowrap;">
+        ${quoteUrl?`<a href="${quoteUrl}" target="_blank" class="pdf-link-btn pdf-blue">📄 見積書</a>`:''}
+        ${orderUrl?`<a href="${orderUrl}" target="_blank" class="pdf-link-btn pdf-green">📝 注文書</a>`:''}
+        ${!quoteUrl&&!orderUrl?`<span style="color:var(--text-muted);font-size:11px;">未登録</span>`:''}
+        <button class="btn btn-sm" onclick="openEstimateUrlModal('${machineId}','${rk}','${quoteUrl}','${orderUrl}')"
+          style="font-size:10px;padding:2px 7px;margin-left:4px;">🔗</button>
+      </td>
+    </tr>`;
+  }).join('');
+  return`<table style="width:100%;border-collapse:collapse;">
+    <thead><tr>
+      <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);font-size:10.5px;font-weight:700;">見積No / 件名</th>
+      <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);font-size:10.5px;font-weight:700;">顧客</th>
+      <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);font-size:10.5px;font-weight:700;">金額</th>
+      <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);font-size:10.5px;font-weight:700;">ステータス</th>
+      <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);font-size:10.5px;font-weight:700;">書類PDF</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+/* 見積URLモーダル操作 */
+let _estModalMachine='',_estModalKey='';
+function openEstimateUrlModal(machineId,rowKey,curQuote,curOrder){
+  _estModalMachine=machineId; _estModalKey=rowKey;
+  document.getElementById('est-url-quote').value=curQuote||'';
+  document.getElementById('est-url-order').value=curOrder||'';
+  document.getElementById('est-url-modal').style.display='flex';
+}
+function closeEstimateUrlModal(){
+  document.getElementById('est-url-modal').style.display='none';
+}
+function saveEstimateUrlModal(){
+  if(!state.linkageUrlOverrides)state.linkageUrlOverrides={};
+  const key=_estModalMachine+'_'+_estModalKey;
+  state.linkageUrlOverrides[key]={
+    quoteUrl:document.getElementById('est-url-quote').value.trim(),
+    orderUrl:document.getElementById('est-url-order').value.trim(),
+  };
+  saveToGAS();
+  closeEstimateUrlModal();
+  showToast('✅ URLを保存しました');
+  renderPage(currentPage);
+}
+
 function switchLinkageTab(tab){
   document.getElementById('linkage-panel-url').style.display=tab==='url'?'':'none';
   document.getElementById('linkage-panel-sheet').style.display=tab==='sheet'?'':'none';
@@ -1397,6 +1572,26 @@ function renderLinkageData(){
       <thead><tr><th>機種</th><th>顧客</th><th>見積金額</th><th>ステータス</th><th>書類PDF</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>`;
+}
+
+/* ============================================================
+   ESTIMATES SECTION (業務フロー内)
+============================================================ */
+function renderEstimatesSectionFlow(machineId){
+  const estimates=getEstimatesForMachine(machineId);
+  const count=estimates.length;
+  const tableHtml=renderEstimatesTable(machineId);
+  return`<div class="estimates-section">
+    <div class="estimates-section-head">
+      <h4>📋 見積管理 連携データ
+        ${count>0?`<span style="background:rgba(255,255,255,.2);border-radius:10px;font-size:11px;padding:1px 8px;">${count}件</span>`:''}
+      </h4>
+      ${!state.linkageData?`<span style="font-size:10px;color:rgba(255,255,255,.5);">管理コンソールで連携設定</span>`:''}
+    </div>
+    <div style="padding:12px 16px;">
+      ${tableHtml}
+    </div>
+  </div>`;
 }
 
 /* ============================================================
@@ -1936,6 +2131,8 @@ function renderDashboard(){
 
   const machineRows=MACHINES.map(m=>{
     const sc=schedules[m.id];const status=state.statuses[m.id];
+    const estCount=getEstimatesForMachine(m.id).length;
+    const driveCount=_getDriveFiles(m.id).length;
     return`<tr>
       <td onclick="showPage('flow');state.flowMachine='${m.id}';renderPage('flow');" style="cursor:pointer;"><strong>${m.id}</strong></td>
       <td>${m.person}</td>
@@ -1949,13 +2146,23 @@ function renderDashboard(){
       <td style="font-size:11px;color:var(--text-sub);" class="inline-editable"
         ondblclick="inlineEditDate(this,'${m.id}','notes_unused')"
         title="ダブルクリックで編集">${state.notes[m.id]||''}</td>
+      <td style="font-size:11px;">
+        ${estCount>0?`<button class="btn btn-sm" onclick="toggleDashEstimates(event,'${m.id}')" style="font-size:10px;padding:2px 8px;background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;">📋 見積 ${estCount}件</button>`:`<span style="color:var(--text-muted);">—</span>`}
+      </td>
       <td onclick="event.stopPropagation()" style="white-space:nowrap;">
         <button class="btn btn-sm" onclick="openEditModal('${m.id}')">編集</button>
         <label class="btn btn-sm" style="cursor:pointer;margin-left:4px;" title="Driveにファイルをアップロード">
-          📎${(_getDriveFiles(m.id).length>0?` <span style="background:var(--primary);color:#fff;border-radius:8px;font-size:10px;padding:0 5px;">${_getDriveFiles(m.id).length}</span>`:'')}
+          📎${driveCount>0?` <span style="background:var(--primary);color:#fff;border-radius:8px;font-size:10px;padding:0 5px;">${driveCount}</span>`:''}
           <input type="file" accept=".pdf,.xlsx,.xls,.png,.jpg,.jpeg,.doc,.docx" style="display:none"
             onchange="handleDriveUpload(event,'${m.id}')">
         </label>
+      </td>
+    </tr>
+    <tr id="dash-est-${m.id}" style="display:none;">
+      <td colspan="12" style="padding:0;">
+        <div style="padding:10px 16px;background:#f8fafc;border-top:1px solid var(--border-light);">
+          ${renderEstimatesTable(m.id)}
+        </div>
       </td>
     </tr>`;
   }).join('');
@@ -1992,7 +2199,7 @@ function renderDashboard(){
       <table><thead><tr>
         <th>機種名</th><th>担当者</th><th>ステータス</th><th>適合</th><th>量産台数</th>
         <th class="center">見本機出荷</th><th class="center">量産実装</th><th class="center">量産組立</th><th class="center">量産出荷</th>
-        <th>備考</th><th></th>
+        <th>備考</th><th>見積</th><th></th>
       </tr></thead><tbody>${machineRows}</tbody></table>
     </div>
     ${ecoHtml}
@@ -2618,6 +2825,7 @@ function renderFlow(){
       </div>
     </div>
     ${renderMilestoneSection(selId)}
+    ${renderEstimatesSectionFlow(selId)}
     ${groupsHtml}
     ${renderDdocSection(selId)}
     ${renderDriveFilesSection(selId)}
@@ -3373,6 +3581,54 @@ function renderAdmin(){
       </div>
     </div>
 
+    <!-- タブ管理 -->
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <h3>🗂️ タブ（サイドバー）管理</h3>
+        <button class="btn btn-sm btn-primary" onclick="saveTabSettings()">💾 保存</button>
+      </div>
+      <div class="admin-section-body">
+        <div style="font-size:11px;color:var(--text-sub);margin-bottom:12px;">表示するタブのON/OFF、名前・アイコンの変更ができます。管理コンソールとダッシュボードは非表示にできません。</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;">
+          <thead><tr>
+            <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);text-align:left;">タブ</th>
+            <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);">表示</th>
+            <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);">アイコン</th>
+            <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);">表示名</th>
+          </tr></thead>
+          <tbody>
+            ${TAB_DEFS.map(t=>{
+              const s=(state.config.tabSettings||{})[t.id]||{};
+              return`<tr>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border-light);">
+                  <span style="font-size:15px;">${s.icon||t.icon}</span>
+                  <span style="margin-left:6px;font-weight:600;">${t.defaultLabel}</span>
+                  ${t.required?'<span style="font-size:10px;color:var(--text-muted);margin-left:4px;">(必須)</span>':''}
+                </td>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border-light);text-align:center;">
+                  <input type="checkbox" id="tab-hidden-${t.id}" ${t.required?'disabled checked':(!s.hidden?'checked':'')}
+                    style="width:16px;height:16px;cursor:${t.required?'not-allowed':'pointer'};">
+                </td>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border-light);">
+                  <input type="text" id="tab-icon-${t.id}" value="${s.icon||t.icon}"
+                    style="width:60px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:14px;text-align:center;">
+                </td>
+                <td style="padding:8px 10px;border-bottom:1px solid var(--border-light);">
+                  <input type="text" id="tab-label-${t.id}" value="${s.label||t.defaultLabel}"
+                    style="width:180px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;font-size:12px;"
+                    ${t.required?'':'placeholder="'+t.defaultLabel+'"'}>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <div style="margin-top:12px;display:flex;gap:8px;">
+          <button class="btn btn-sm btn-primary" onclick="saveTabSettings()">💾 タブ設定を保存</button>
+          <button class="btn btn-sm" onclick="resetTabSettings()">↩️ 初期設定に戻す</button>
+        </div>
+      </div>
+    </div>
+
     <!-- データ管理 -->
     <div class="admin-section">
       <div class="admin-section-head"><h3>💾 データ管理</h3></div>
@@ -3672,10 +3928,13 @@ function _init(saved){
       if(s.milestones)Object.assign(state.milestones,s.milestones);
       if(s.futureModels)state.futureModels=s.futureModels;
       if(s.driveFiles)Object.assign(state.driveFiles,s.driveFiles);
+      if(s.linkageUrlOverrides)Object.assign(state.linkageUrlOverrides,s.linkageUrlOverrides);
+      if(s.config&&s.config.tabSettings)Object.assign(state.config.tabSettings,s.config.tabSettings);
     }catch(e){}
   }
   updateEcoBadge();
   updateFutureBadge();
+  applyTabSettings();
   renderDashboard();
 }
 
