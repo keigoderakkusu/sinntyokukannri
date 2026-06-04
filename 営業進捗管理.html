@@ -1265,11 +1265,52 @@ function setupDailyTrigger(){
     .setupDailyTrigger();
 }
 
+function switchLinkageTab(tab){
+  document.getElementById('linkage-panel-url').style.display=tab==='url'?'':'none';
+  document.getElementById('linkage-panel-sheet').style.display=tab==='sheet'?'':'none';
+  document.getElementById('linkage-tab-url').style.cssText=tab==='url'
+    ?'flex:1;padding:7px 12px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--primary);color:#fff;'
+    :'flex:1;padding:7px 12px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--bg);color:var(--text);';
+  document.getElementById('linkage-tab-sheet').style.cssText=tab==='sheet'
+    ?'flex:1;padding:7px 12px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--primary);color:#fff;'
+    :'flex:1;padding:7px 12px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--bg);color:var(--text);';
+}
+
 function saveLinkageUrl(){
   const url=document.getElementById('linkage-url-input')?.value?.trim()||'';
   state.config.linkageUrl=url;
   saveToGAS();
   showToast('✅ URLを保存しました');
+}
+
+function saveLinkageSheetSettings(){
+  state.config.linkageSheetId=document.getElementById('linkage-sheet-id-input')?.value?.trim()||'';
+  state.config.linkageSheetName=document.getElementById('linkage-sheet-name-input')?.value?.trim()||'';
+  saveToGAS();
+  showToast('✅ シート設定を保存しました');
+}
+
+async function fetchLinkageDataFromSheet(){
+  const sheetId=state.config.linkageSheetId;
+  const sheetName=state.config.linkageSheetName||'';
+  if(!sheetId){showToast('⚠️ スプレッドシートIDを入力してください');return;}
+  const div=document.getElementById('linkage-data');
+  if(div)div.innerHTML='<div style="color:var(--text-sub);font-size:12px;">取得中...</div>';
+  if(typeof google!=='undefined'&&google.script){
+    google.script.run
+      .withSuccessHandler(data=>{
+        if(data){
+          try{state.linkageData=JSON.parse(data);}catch(e){state.linkageData={raw:data};}
+        }else{state.linkageData=null;}
+        renderLinkageData();
+      })
+      .withFailureHandler(err=>{
+        if(div)div.innerHTML=`<div class="alert-bar">⚠️ ${err.message}</div>`;
+      })
+      .getLinkageDataFromSheet(sheetId, sheetName);
+  }else{
+    if(div)div.innerHTML='<div class="alert-bar">⚠️ GAS環境でのみ使用できます</div>';
+  }
 }
 
 async function fetchLinkageData(){
@@ -3269,18 +3310,66 @@ function renderAdmin(){
         <a href="https://github.com/knagahama-lab/mitumorikannri-VR3" target="_blank" style="font-size:11px;color:var(--primary);">mitumorikannri-VR3 ↗</a>
       </div>
       <div class="admin-section-body">
-        <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
-          <input type="text" id="linkage-url-input"
-            placeholder="https://script.google.com/macros/s/.../exec (見積管理GAS URL)"
-            value="${state.config.linkageUrl||''}"
-            style="flex:1;min-width:300px;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
-          <button class="btn btn-sm btn-primary" onclick="saveLinkageUrl()">URL保存</button>
-          <button class="btn btn-sm" onclick="fetchLinkageData()">🔄 データ取得</button>
+
+        <!-- 方法タブ -->
+        <div style="display:flex;gap:0;margin-bottom:14px;border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+          <button id="linkage-tab-url" onclick="switchLinkageTab('url')"
+            style="flex:1;padding:7px 12px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--primary);color:#fff;">
+            方法① GAS URL（OAuthトークン）
+          </button>
+          <button id="linkage-tab-sheet" onclick="switchLinkageTab('sheet')"
+            style="flex:1;padding:7px 12px;font-size:12px;font-weight:600;border:none;cursor:pointer;background:var(--bg);color:var(--text);">
+            方法② スプレッドシート直接読込
+          </button>
         </div>
-        <div class="alert-bar-info" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;font-size:11px;color:#1e40af;margin-bottom:12px;">
-          ℹ️ 見積管理側の Code.gs に <code>getForLink</code> 関数が必要です。<code>linkage-helper.gs</code> を見積管理プロジェクトに追加してください。
+
+        <!-- 方法① URL -->
+        <div id="linkage-panel-url">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+            <input type="text" id="linkage-url-input"
+              placeholder="https://script.google.com/a/macros/.../exec"
+              value="${state.config.linkageUrl||''}"
+              style="flex:1;min-width:300px;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+            <button class="btn btn-sm btn-primary" onclick="saveLinkageUrl()">URL保存</button>
+            <button class="btn btn-sm" onclick="fetchLinkageData()">🔄 データ取得</button>
+          </div>
+          <div class="alert-bar-info" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;font-size:11px;color:#1e40af;margin-bottom:12px;">
+            ℹ️ ドメイン内制限URLの場合、このGASのOAuthトークンで認証します。見積管理側の <code>doGet</code> に <code>getForLink</code> の分岐が必要です。
+          </div>
         </div>
-        <div id="linkage-data"></div>
+
+        <!-- 方法② スプレッドシートID -->
+        <div id="linkage-panel-sheet" style="display:none;">
+          <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:11px;color:#166534;">
+            ✅ <strong>GAS不要・最も確実な方法</strong><br>
+            見積管理スプレッドシートの ID を直接入力するだけで連携できます。このGASアカウントがそのシートを「閲覧」できれば動作します。
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+            <div style="flex:1;min-width:300px;">
+              <label style="font-size:11px;font-weight:600;color:var(--text-sub);display:block;margin-bottom:4px;">スプレッドシートID</label>
+              <input type="text" id="linkage-sheet-id-input"
+                placeholder="1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgVE2upms（URLの/d/と/editの間）"
+                value="${state.config.linkageSheetId||''}"
+                style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+            </div>
+            <div style="min-width:160px;">
+              <label style="font-size:11px;font-weight:600;color:var(--text-sub);display:block;margin-bottom:4px;">シート名（空白=アクティブ）</label>
+              <input type="text" id="linkage-sheet-name-input"
+                placeholder="見積管理"
+                value="${state.config.linkageSheetName||''}"
+                style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;">
+            <button class="btn btn-sm btn-primary" onclick="saveLinkageSheetSettings()">💾 保存</button>
+            <button class="btn btn-sm" onclick="fetchLinkageDataFromSheet()">🔄 データ取得</button>
+          </div>
+          <div style="margin-top:10px;font-size:11px;color:var(--text-sub);">
+            💡 スプレッドシートIDの確認: シートURLの <code>https://docs.google.com/spreadsheets/d/<strong style="color:var(--primary);">ここがID</strong>/edit</code>
+          </div>
+        </div>
+
+        <div id="linkage-data" style="margin-top:12px;"></div>
       </div>
     </div>
 

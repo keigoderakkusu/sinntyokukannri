@@ -37,9 +37,12 @@ function getLinkageData(url) {
   try {
     var sep = url.indexOf('?') >= 0 ? '&' : '?';
     var fetchUrl = url + sep + 'action=getForLink';
+    // ドメイン内ユーザー制限のGASにはOAuthトークンを付与して認証
+    var token = ScriptApp.getOAuthToken();
     var res = UrlFetchApp.fetch(fetchUrl, {
       muteHttpExceptions: true,
       followRedirects: true,
+      headers: { 'Authorization': 'Bearer ' + token },
     });
     var code = res.getResponseCode();
     var body = res.getContentText();
@@ -67,7 +70,7 @@ function getLinkageData(url) {
       code: code,
       message: 'HTTPエラー: ' + code,
       hint: code === 401 || code === 302
-        ? 'GASのデプロイが「ドメイン内ユーザーのみ」に制限されています。「全員（匿名ユーザーを含む）」に変更してください。'
+        ? 'OAuthトークンを送信しましたが認証に失敗しました。①進捗管理GASの「サービス」に外部サービスが承認されているか確認 ②見積管理GASのデプロイ実行ユーザーが「自分」になっているか確認してください。'
         : code === 404 ? 'URLが見つかりません。デプロイURLを確認してください。'
         : 'URLまたはデプロイ設定を確認してください。',
       bodyExcerpt: body.substring(0, 200),
@@ -110,6 +113,92 @@ function uploadFileToDrive(fileName, base64Data, mimeType, machineId) {
   } catch (e) {
     return JSON.stringify({ success: false, error: e.message });
   }
+}
+
+/**
+ * 方法②: スプレッドシートIDで直接読み込み（見積管理GASが不要）
+ * 管理コンソールの「スプレッドシートID」欄にIDを入力して使う
+ * シート列名は linkage-helper.gs の LINKAGE_CONFIG.columns と同じ
+ */
+function getLinkageDataFromSheet(spreadsheetId, sheetName) {
+  if (!spreadsheetId) return null;
+  try {
+    var ss = SpreadsheetApp.openById(spreadsheetId);
+    var sheet = sheetName ? ss.getSheetByName(sheetName) : ss.getActiveSheet();
+    if (!sheet) return JSON.stringify({ __error: true, code: 0, message: 'シートが見つかりません: ' + sheetName });
+
+    var data = sheet.getDataRange().getValues();
+    if (data.length < 2) return JSON.stringify({ estimates: [], total: 0 });
+
+    var headers = data[0].map(function(h){ return String(h).trim(); });
+
+    // 列インデックスを探す（linkage-helper.gs と同じロジック）
+    var COL_CANDIDATES = {
+      machineId: ['機種名','機種コード','モデル','id','machineId'],
+      customer:  ['顧客名','得意先','お客様','client','customer'],
+      amount:    ['見積金額','金額','受注金額','amount'],
+      status:    ['ステータス','状態','status'],
+      quoteDate: ['見積提出日','見積日','提出日','quoteDate'],
+      poDate:    ['注文書受領日','注文書日','受領日','poDate','orderDate'],
+      url:       ['見積書URL','見積リンク','見積PDF','URL','リンク','url','link'],
+      orderUrl:  ['注文書URL','注文書リンク','注文書PDF','orderUrl','orderLink','po_url'],
+      orderNo:   ['注文番号','注文書番号','PO番号','orderNo'],
+      quoteNo:   ['見積番号','見積No','quoteNo'],
+      memo:      ['備考','メモ','note','memo'],
+    };
+    var colIdx = {};
+    Object.keys(COL_CANDIDATES).forEach(function(field) {
+      colIdx[field] = -1;
+      COL_CANDIDATES[field].forEach(function(c) {
+        if (colIdx[field] < 0) {
+          var i = headers.indexOf(c);
+          if (i >= 0) colIdx[field] = i;
+        }
+      });
+    });
+
+    var QUOTE_DONE = ['見積提出済','提出済','見積済','商談中','受注','注文書受領','完了'];
+    var PO_DONE    = ['注文書受領','受注','注文書受領済','注文確定','完了'];
+
+    var estimates = [];
+    for (var r = 1; r < data.length; r++) {
+      var row = data[r];
+      var mid = colIdx.machineId >= 0 ? String(row[colIdx.machineId]||'').trim() : '';
+      if (!mid) continue;
+      var status = String(colIdx.status >= 0 ? row[colIdx.status]||'' : '');
+      var qDate = colIdx.quoteDate >= 0 ? _fmtCellDate(row[colIdx.quoteDate]) : '';
+      var pDate = colIdx.poDate    >= 0 ? _fmtCellDate(row[colIdx.poDate])    : '';
+      estimates.push({
+        id: mid, machineId: mid,
+        customer: colIdx.customer >= 0 ? String(row[colIdx.customer]||'') : '',
+        amount:   colIdx.amount   >= 0 ? (parseFloat(String(row[colIdx.amount]||'').replace(/[^\d.]/g,''))||0) : 0,
+        status:   status,
+        quoteSubmitted: !!(qDate || QUOTE_DONE.some(function(s){return status.indexOf(s)>=0;})),
+        quoteDate: qDate,
+        poReceived: !!(pDate || PO_DONE.some(function(s){return status.indexOf(s)>=0;})),
+        poDate: pDate,
+        url:      colIdx.url      >= 0 ? String(row[colIdx.url]||'')      : '',
+        orderUrl: colIdx.orderUrl >= 0 ? String(row[colIdx.orderUrl]||'') : '',
+        orderNo:  colIdx.orderNo  >= 0 ? String(row[colIdx.orderNo]||'')  : '',
+        quoteNo:  colIdx.quoteNo  >= 0 ? String(row[colIdx.quoteNo]||'')  : '',
+        memo:     colIdx.memo     >= 0 ? String(row[colIdx.memo]||'')     : '',
+        rowIndex: r + 1,
+      });
+    }
+    return JSON.stringify({ estimates: estimates, total: estimates.length, updatedAt: new Date().toISOString(), sheetName: sheet.getName() });
+  } catch (e) {
+    return JSON.stringify({ __error: true, code: 0, message: e.message,
+      hint: 'スプレッドシートIDを確認するか、このGASアカウントにシートの閲覧権限があるか確認してください。' });
+  }
+}
+
+function _fmtCellDate(v) {
+  if (!v) return '';
+  if (v instanceof Date) {
+    return Utilities.formatDate(v, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  }
+  var s = String(v).trim();
+  return /^\d{4}[-\/]\d{1,2}[-\/]\d{1,2}/.test(s) ? s.substring(0,10).replace(/\//g,'-') : '';
 }
 
 function deleteFileFromDrive(fileId) {
