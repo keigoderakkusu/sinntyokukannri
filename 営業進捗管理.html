@@ -1364,44 +1364,66 @@ function applyExcelUpdates(updates){
    EMAIL NOTIFICATION SETTINGS
 ============================================================ */
 function saveNotifySettings(){
-  const email=document.getElementById('notify-email-input')?.value?.trim()||'';
-  const threshold=parseInt(document.getElementById('notify-threshold-input')?.value)||50;
-  const appUrl=document.getElementById('notify-appurl-input')?.value?.trim()||'';
-  state.config.notifyEmail=email;
-  state.config.notifyThreshold=threshold;
-  state.config.appUrl=appUrl;
+  // 複数メール
+  const rows=document.querySelectorAll('.notify-email-row');
+  const emails=[];
+  rows.forEach(r=>{const v=r.querySelector('input')?.value?.trim();if(v)emails.push(v);});
+  // 旧フィールドとの互換
+  const singleEmail=document.getElementById('notify-email-input')?.value?.trim()||'';
+  if(singleEmail&&!emails.includes(singleEmail))emails.unshift(singleEmail);
+  state.config.notifyEmails=emails;
+  state.config.notifyEmail=emails[0]||'';
+  state.config.notifyThreshold=parseInt(document.getElementById('notify-threshold-input')?.value)||50;
+  state.config.appUrl=document.getElementById('notify-appurl-input')?.value?.trim()||'';
+  // 通知カテゴリ
+  state.config.notifyCategories={
+    schedule: document.getElementById('nc-schedule')?.checked!==false,
+    eco:      document.getElementById('nc-eco')?.checked!==false,
+    milestone:document.getElementById('nc-milestone')?.checked!==false,
+    statusChange:document.getElementById('nc-statuschange')?.checked!==false,
+  };
   saveToGAS();
-  // Update badge
   const badge=document.getElementById('notify-status-badge');
   if(badge){
-    badge.textContent=email?`✅ ${email}`:'⚠️ 未設定';
-    badge.style.color=email?'var(--success)':'var(--warning)';
+    badge.textContent=emails.length?`✅ ${emails.length}件`:'⚠️ 未設定';
+    badge.style.color=emails.length?'var(--success)':'var(--warning)';
   }
-  showToast(email?`✅ 通知先: ${email}`:'⚠️ メールアドレスを入力してください');
+  showToast(emails.length?`✅ ${emails.length}件のメールアドレスを保存しました`:'⚠️ メールアドレスを入力してください');
+}
+
+function addNotifyEmailRow(email){
+  const list=document.getElementById('notify-emails-list');
+  if(!list)return;
+  const idx=list.children.length;
+  const div=document.createElement('div');
+  div.className='notify-email-row';
+  div.style.cssText='display:flex;gap:6px;margin-bottom:6px;';
+  div.innerHTML=`<input type="email" placeholder="メールアドレス"
+    value="${email||''}"
+    style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+    <button class="btn btn-sm btn-danger" onclick="this.closest('.notify-email-row').remove()" style="padding:4px 8px;">✕</button>`;
+  list.appendChild(div);
 }
 
 function sendTestEmail(){
-  const email=document.getElementById('notify-email-input')?.value?.trim()||state.config.notifyEmail;
-  if(!email){showToast('⚠️ メールアドレスを入力してください');return;}
-  if(typeof google==='undefined'||!google.script){
-    showToast('⚠️ GAS上でのみ動作します');return;
-  }
-  // 一時的にメールアドレスを設定してテスト送信
-  const saved=state.config.notifyEmail;
-  state.config.notifyEmail=email;
+  const emails=(state.config.notifyEmails&&state.config.notifyEmails.length)
+    ?state.config.notifyEmails
+    :[state.config.notifyEmail||''];
+  const validEmails=emails.filter(Boolean);
+  if(!validEmails.length){showToast('⚠️ メールアドレスを先に保存してください');return;}
+  if(typeof google==='undefined'||!google.script){showToast('⚠️ GAS上でのみ動作します');return;}
   const json=JSON.stringify({statuses:state.statuses,schedules:state.schedules,notes:state.notes,eco:state.eco,config:state.config});
   google.script.run
-    .withSuccessHandler(()=>showToast(`✅ テストメールを ${email} に送信しました`))
+    .withSuccessHandler(()=>showToast(`✅ テストメールを ${validEmails.join(', ')} に送信しました`))
     .withFailureHandler(err=>showToast('⚠️ 送信失敗: '+err.message))
     .sendAlertEmail(json,'テスト送信');
-  state.config.notifyEmail=saved;
 }
 
 function setupDailyTrigger(){
-  if(typeof google==='undefined'||!google.script){
-    showToast('⚠️ GAS上でのみ動作します');return;
+  if(typeof google==='undefined'||!google.script){showToast('⚠️ GAS上でのみ動作します');return;}
+  if(!state.config.notifyEmail&&!(state.config.notifyEmails||[]).length){
+    showToast('⚠️ 先にメールアドレスを保存してください');return;
   }
-  if(!state.config.notifyEmail){showToast('⚠️ 先にメールアドレスを保存してください');return;}
   google.script.run
     .withSuccessHandler(()=>showToast('✅ 毎日8時のトリガーを設定しました'))
     .withFailureHandler(err=>showToast('⚠️ '+err.message))
@@ -2547,7 +2569,7 @@ function renderSchedule(){
       const sp=Math.max(0,(startD-GANTT_START)/(GANTT_TOTAL*86400000)*100);
       const ep=datePct(endDateStr)||0;
       bars.push({
-        key:def.key,label:def.label,color:def.color,
+        key:def.key,prevKey:def.prevKey||'',label:def.label,color:def.color,
         startPct:sp,endPct:ep,
         widthPct:Math.max(ep-sp,0.8),
         dateStr:endDateStr,lane:0,
@@ -2575,9 +2597,8 @@ function renderSchedule(){
       const color=done?'#94a3b8':bar.color;
       const outline=near?`outline:2px solid #fbbf24;outline-offset:1px;`:'';
       const shortLabel=bar.label.replace('見本機','').replace('量産','');
-      const prevKey=def.prevKey||'';
       return`<div class="gantt-bar"
-        data-machine="${m.id}" data-phase="${bar.key}" data-prev="${prevKey}"
+        data-machine="${m.id}" data-phase="${bar.key}" data-prev="${bar.prevKey}"
         style="left:${bar.startPct.toFixed(2)}%;width:${bar.widthPct.toFixed(2)}%;top:${top}px;height:${BAR_H}px;background:${color};${outline}cursor:grab;display:flex;align-items:center;"
         onmousedown="startGanttMoveOrResize(event,'move')"
         title="${bar.label}: ${fmtD(bar.dateStr)}${done?' ✅':''}${near?' ⚠️直近':''}">
@@ -3898,33 +3919,75 @@ function renderAdmin(){
     <div class="admin-section">
       <div class="admin-section-head">
         <h3>📧 メール通知設定</h3>
-        <span id="notify-status-badge" style="font-size:11px;"></span>
+        <span id="notify-status-badge" style="font-size:11px;color:var(--success);">${
+          (state.config.notifyEmails||[]).filter(Boolean).length
+            ? `✅ ${(state.config.notifyEmails).filter(Boolean).length}件登録済`
+            : state.config.notifyEmail ? `✅ ${state.config.notifyEmail}` : '⚠️ 未設定'
+        }</span>
       </div>
       <div class="admin-section-body">
-        <div class="form-row" style="margin-bottom:12px;">
-          <div class="form-field">
-            <label>通知先メールアドレス</label>
-            <input type="email" id="notify-email-input" placeholder="your@email.com"
-              value="${state.config.notifyEmail||''}">
+
+        <!-- 宛先リスト -->
+        <div style="margin-bottom:14px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+            <label style="font-size:12px;font-weight:700;">📬 通知先メールアドレス（複数登録可）</label>
+            <button class="btn btn-sm" onclick="addNotifyEmailRow('')">＋ 宛先追加</button>
           </div>
+          <div id="notify-emails-list">
+            ${(()=>{
+              const emails=(state.config.notifyEmails&&state.config.notifyEmails.length)
+                ?state.config.notifyEmails
+                :[state.config.notifyEmail||''];
+              return emails.map(email=>`
+                <div class="notify-email-row" style="display:flex;gap:6px;margin-bottom:6px;">
+                  <input type="email" placeholder="メールアドレス" value="${email}"
+                    style="flex:1;padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+                  <button class="btn btn-sm btn-danger" onclick="this.closest('.notify-email-row').remove()" style="padding:4px 8px;">✕</button>
+                </div>`).join('');
+            })()}
+          </div>
+        </div>
+
+        <!-- 通知カテゴリ -->
+        <div style="margin-bottom:14px;">
+          <label style="font-size:12px;font-weight:700;display:block;margin-bottom:8px;">🔔 通知する項目（チェックで有効）</label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;">
+            ${[
+              ['nc-schedule',   'schedule',   '📅 スケジュール警告（7日以内）', true],
+              ['nc-eco',        'eco',        '♻️ エコフロー滞留警告',          true],
+              ['nc-milestone',  'milestone',  '🎯 見積書・注文書 期限警告',      true],
+              ['nc-statuschange','statusChange','🔄 機種ステータス変更',          true],
+            ].map(([id,key,label,def])=>{
+              const checked=(state.config.notifyCategories&&state.config.notifyCategories[key]!==undefined)
+                ?state.config.notifyCategories[key]!==false : def;
+              return`<label style="display:flex;align-items:center;gap:8px;padding:8px 12px;background:var(--bg);border:1px solid var(--border-light);border-radius:6px;cursor:pointer;font-size:12px;">
+                <input type="checkbox" id="${id}" ${checked?'checked':''} style="width:15px;height:15px;">
+                ${label}
+              </label>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="form-row" style="margin-bottom:12px;">
           <div class="form-field">
             <label>エコ滞留警告 しきい値（台）</label>
             <input type="number" id="notify-threshold-input" min="1" value="${state.config.notifyThreshold||50}">
           </div>
+          <div class="form-field">
+            <label>システム URL（メール内リンク用）</label>
+            <input type="text" id="notify-appurl-input" placeholder="https://script.google.com/macros/s/.../exec"
+              value="${state.config.appUrl||''}">
+          </div>
         </div>
-        <div class="form-field" style="margin-bottom:12px;">
-          <label>システム URL（メール内リンク用）</label>
-          <input type="text" id="notify-appurl-input" placeholder="https://script.google.com/macros/s/.../exec"
-            value="${state.config.appUrl||''}">
-        </div>
+        <input type="hidden" id="notify-email-input" value="${state.config.notifyEmail||''}">
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <button class="btn btn-primary btn-sm" onclick="saveNotifySettings()">💾 設定を保存</button>
           <button class="btn btn-sm" onclick="sendTestEmail()">📧 テストメール送信</button>
           <button class="btn btn-sm btn-success" onclick="setupDailyTrigger()">⏰ 毎日8時トリガーを設定</button>
         </div>
-        <div style="margin-top:12px;" class="alert-bar-info" style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;font-size:11px;color:#1e40af;">
-          ℹ️ <strong>「毎日8時トリガーを設定」</strong>を一度クリックすると、GASが毎朝8時にサマリーメールを自動送信します。<br>
-          重要な変更（スケジュール更新・エコ移動）時はリアルタイムでも通知が届きます。
+        <div style="margin-top:12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:8px 12px;font-size:11px;color:#1e40af;">
+          ℹ️ <strong>「毎日8時トリガーを設定」</strong>を一度クリックすると、GASが毎朝8時にサマリーメールを全宛先に自動送信します。<br>
+          重要な変更（スケジュール更新・エコ移動）時はリアルタイムでも全宛先に通知が届きます。
         </div>
       </div>
     </div>

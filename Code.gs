@@ -338,8 +338,15 @@ function _parseState(json) {
   try { return typeof json === 'string' ? JSON.parse(json) : json; } catch(e) { return null; }
 }
 
+/** 複数メールアドレスに対応（カンマ区切り or 配列） */
 function _getNotifyEmail(state) {
-  return (state.config && state.config.notifyEmail) ? state.config.notifyEmail.trim() : '';
+  if (!state.config) return '';
+  // 新方式: notifyEmails は配列
+  if (Array.isArray(state.config.notifyEmails) && state.config.notifyEmails.length > 0) {
+    return state.config.notifyEmails.filter(function(e){ return e && e.trim(); }).join(',');
+  }
+  // 旧方式: notifyEmail は文字列
+  return state.config.notifyEmail ? state.config.notifyEmail.trim() : '';
 }
 
 function _fmtDate(d) {
@@ -359,36 +366,45 @@ function _checkAlerts(state) {
   var alerts = [];
   var today = new Date(); today.setHours(0,0,0,0);
   var ids = Object.keys(state.statuses || {});
+  var nc = state.config && state.config.notifyCategories || {};
+  // notifyCategories が未設定の場合はすべて有効
+  var cat = function(key){ return nc[key] !== false; };
 
   // スケジュール警告（7日以内）
-  ids.forEach(function(id) {
-    var sc = state.schedules && state.schedules[id];
-    if (!sc) return;
-    Object.keys(_PHASE_LABELS).forEach(function(key) {
-      if (!sc[key]) return;
-      var d = new Date(sc[key]); d.setHours(0,0,0,0);
-      var diff = Math.ceil((d - today) / 86400000);
-      if (diff >= 0 && diff <= 7) {
-        alerts.push({type:'schedule', id:id, label:_PHASE_LABELS[key], date:sc[key], diff:diff});
-      }
-    });
-  });
-
-  // エコ滞留警告
-  var threshold = (state.config && state.config.notifyThreshold) || 50;
-  if (state.eco) {
-    Object.keys(state.eco).forEach(function(machineId) {
-      var eco = state.eco[machineId] || {};
-      Object.keys(eco).forEach(function(stage) {
-        if (stage !== 'delivered' && (eco[stage] || 0) >= threshold) {
-          alerts.push({type:'eco', id:machineId, stage:stage, qty:eco[stage]});
+  if (cat('schedule')) {
+    ids.forEach(function(id) {
+      var sc = state.schedules && state.schedules[id];
+      if (!sc) return;
+      Object.keys(_PHASE_LABELS).forEach(function(key) {
+        if (!sc[key]) return;
+        var d = new Date(sc[key]); d.setHours(0,0,0,0);
+        var diff = Math.ceil((d - today) / 86400000);
+        if (diff >= 0 && diff <= 7) {
+          alerts.push({type:'schedule', id:id, label:_PHASE_LABELS[key], date:sc[key], diff:diff});
         }
       });
     });
   }
 
+  // エコ滞留警告
+  if (cat('eco')) {
+    var threshold = (state.config && state.config.notifyThreshold) || 50;
+    if (state.eco) {
+      Object.keys(state.eco).forEach(function(machineId) {
+        var eco = state.eco[machineId] || {};
+        Object.keys(eco).forEach(function(stage) {
+          if (stage !== 'delivered' && (eco[stage] || 0) >= threshold) {
+            alerts.push({type:'eco', id:machineId, stage:stage, qty:eco[stage]});
+          }
+        });
+      });
+    }
+  }
+
   // マイルストーン警告（見積提出・注文書受領）
-  _checkMilestoneAlerts(state, alerts);
+  if (cat('milestone')) {
+    _checkMilestoneAlerts(state, alerts);
+  }
 
   return alerts;
 }
