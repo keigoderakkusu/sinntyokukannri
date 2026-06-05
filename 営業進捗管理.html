@@ -269,6 +269,12 @@ td.editing select,td.editing input{width:100%;padding:5px 8px;border:1px solid v
 .gantt-bar:hover{opacity:.88;box-shadow:0 2px 8px rgba(0,0,0,.28),0 0 0 2px rgba(255,255,255,.4);}
 .gantt-bar.dragging{cursor:grabbing;opacity:.75;z-index:20;box-shadow:0 6px 18px rgba(0,0,0,.35);}
 .gantt-bar-end-tick{position:absolute;right:0;top:2px;bottom:2px;width:3px;background:rgba(255,255,255,.45);border-radius:0 3px 3px 0;pointer-events:none;}
+.gantt-resize-handle{position:absolute;top:0;bottom:0;width:10px;cursor:ew-resize;z-index:15;display:flex;align-items:center;justify-content:center;opacity:0;transition:opacity .15s;}
+.gantt-bar:hover .gantt-resize-handle{opacity:1;}
+.gantt-resize-left{left:0;border-radius:4px 0 0 4px;background:rgba(255,255,255,.3);}
+.gantt-resize-right{right:0;border-radius:0 4px 4px 0;background:rgba(255,255,255,.3);}
+.gantt-resize-handle::after{content:'⋮';font-size:10px;color:rgba(255,255,255,.9);line-height:1;letter-spacing:-1px;}
+.gantt-bar-label{pointer-events:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;padding:0 2px;user-select:none;}
 .gantt-today-line{position:absolute;top:0;bottom:0;width:2px;background:var(--danger);opacity:.65;pointer-events:none;z-index:8;}
 .gantt-month-line{position:absolute;top:0;bottom:0;width:1px;background:var(--border-light);pointer-events:none;}
 .gantt-drag-tooltip{position:fixed;background:#1e293b;color:#fff;padding:4px 10px;border-radius:6px;font-size:11px;font-family:'IBM Plex Mono',monospace;pointer-events:none;z-index:1000;display:none;}
@@ -850,6 +856,52 @@ select:focus{border-color:var(--primary);}
     <div class="modal-footer">
       <button class="btn btn-sm" onclick="closeMoveModal()">キャンセル</button>
       <button class="btn btn-primary btn-sm" onclick="execMove()">移動実行</button>
+    </div>
+  </div>
+</div>
+
+<!-- Googleカレンダー登録モーダル -->
+<div class="modal-overlay" id="gcal-modal" style="display:none" onclick="if(event.target===this)closeGcalModal()">
+  <div class="modal" style="max-width:540px;">
+    <div class="modal-head">
+      <h3>📅 Googleカレンダーに登録</h3>
+      <button class="modal-close" onclick="closeGcalModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="gcal-machine-label" style="font-size:13px;font-weight:700;margin-bottom:12px;color:var(--primary);"></div>
+      <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:8px 12px;margin-bottom:14px;font-size:11px;color:#166534;">
+        ✅ 以下の予定をGoogleカレンダーに登録します。各日程にメールリマインダーが設定されます。
+      </div>
+
+      <div id="gcal-events-list" style="margin-bottom:14px;"></div>
+
+      <div class="form-field" style="margin-bottom:12px;">
+        <label>カレンダーID（空白=デフォルトカレンダー）</label>
+        <input type="text" id="gcal-calendar-id" placeholder="example@group.calendar.google.com"
+          value="" style="width:100%;font-size:12px;">
+        <div style="font-size:10px;color:var(--text-muted);margin-top:3px;">
+          特定のカレンダーに登録する場合は、カレンダー設定から「カレンダーID」をコピーしてください
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:4px;">
+        <div class="form-field">
+          <label style="font-size:10px;">見積書リマインダー（日前）</label>
+          <input type="number" id="gcal-reminder-quote" value="7" min="1" max="30" style="text-align:center;">
+        </div>
+        <div class="form-field">
+          <label style="font-size:10px;">注文書リマインダー（日前）</label>
+          <input type="number" id="gcal-reminder-po" value="7" min="1" max="30" style="text-align:center;">
+        </div>
+        <div class="form-field">
+          <label style="font-size:10px;">納品リマインダー（日前）</label>
+          <input type="number" id="gcal-reminder-goal" value="14" min="1" max="30" style="text-align:center;">
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="closeGcalModal()">キャンセル</button>
+      <button class="btn btn-primary" onclick="execGcalExport()">📅 カレンダーに登録</button>
     </div>
   </div>
 </div>
@@ -1440,6 +1492,112 @@ function saveEstimateUrlModal(){
   renderPage(currentPage);
 }
 
+/* ============================================================
+   GOOGLE CALENDAR EXPORT
+============================================================ */
+let _gcalMachineId='';
+
+function openGcalModal(machineId){
+  _gcalMachineId=machineId;
+  const ms=_getMs(machineId);
+  const{quoteDeadline,poDeadline}=_computeMs(ms);
+  const m=MACHINES.find(x=>x.id===machineId)||{id:machineId};
+
+  document.getElementById('gcal-machine-label').textContent=`【 ${machineId} 】${m.person?m.person+' 担当':''}`;
+
+  // Build event preview list
+  const events=_buildGcalEvents(machineId);
+  if(!events.length){
+    document.getElementById('gcal-events-list').innerHTML=
+      '<div style="color:var(--text-muted);font-size:12px;">ゴール日が未設定です。業務フロー → マイルストーン設定でゴール日を登録してください。</div>';
+  }else{
+    const sc=state.schedules[machineId]||{};
+    document.getElementById('gcal-events-list').innerHTML=`
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead><tr>
+          <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);text-align:left;">予定タイトル</th>
+          <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);">日付</th>
+          <th style="padding:6px 10px;background:#f8fafc;border-bottom:2px solid var(--border-light);">メール通知</th>
+        </tr></thead>
+        <tbody>${events.map(ev=>`<tr>
+          <td style="padding:7px 10px;border-bottom:1px solid var(--border-light);">${ev.icon} ${ev.title}</td>
+          <td style="padding:7px 10px;border-bottom:1px solid var(--border-light);font-family:monospace;font-weight:700;">${ev.date}</td>
+          <td style="padding:7px 10px;border-bottom:1px solid var(--border-light);font-size:11px;color:var(--text-sub);">${ev.emailDays}日前</td>
+        </tr>`).join('')}</tbody>
+      </table>`;
+  }
+  document.getElementById('gcal-modal').style.display='flex';
+}
+
+function _buildGcalEvents(machineId){
+  const ms=_getMs(machineId);
+  if(!ms.goalDate)return[];
+  const{quoteDeadline,poDeadline}=_computeMs(ms);
+  const sc=state.schedules[machineId]||{};
+  const rQ=parseInt(document.getElementById('gcal-reminder-quote')?.value||7);
+  const rP=parseInt(document.getElementById('gcal-reminder-po')?.value||7);
+  const rG=parseInt(document.getElementById('gcal-reminder-goal')?.value||14);
+  const events=[];
+  if(quoteDeadline)events.push({
+    icon:'📄', title:`【${machineId}】見積書 提出締め切り`,
+    date:quoteDeadline, emailDays:rQ,
+    description:`機種: ${machineId}\n見積書提出の締め切り日です。\n初回納品日: ${ms.goalDate}`,
+  });
+  if(poDeadline)events.push({
+    icon:'📝', title:`【${machineId}】注文書 受領締め切り`,
+    date:poDeadline, emailDays:rP,
+    description:`機種: ${machineId}\n注文書受領の締め切り日です。\n初回納品日: ${ms.goalDate}`,
+  });
+  events.push({
+    icon:'🎯', title:`【${machineId}】初回納品（ゴール）`,
+    date:ms.goalDate, emailDays:rG,
+    description:`機種: ${machineId}\n初回納品（ゴール）日です。`,
+  });
+  // Scheduleフェーズ
+  const phaseDefs=[
+    {k:'sampleShip',label:'見本機出荷'},{k:'prodImpl',label:'量産実装'},
+    {k:'prodAssy',label:'量産組立'},{k:'prodShip',label:'量産出荷'},
+  ];
+  phaseDefs.forEach(p=>{
+    if(sc[p.k])events.push({
+      icon:'📦', title:`【${machineId}】${p.label}`,
+      date:sc[p.k], emailDays:3,
+      description:`機種: ${machineId}\n${p.label} 予定日`,
+    });
+  });
+  return events;
+}
+
+function closeGcalModal(){
+  document.getElementById('gcal-modal').style.display='none';
+}
+
+function execGcalExport(){
+  if(!_gcalMachineId)return;
+  const events=_buildGcalEvents(_gcalMachineId);
+  if(!events.length){showToast('⚠️ ゴール日が未設定です');return;}
+  const calendarId=document.getElementById('gcal-calendar-id').value.trim();
+  if(typeof google==='undefined'||!google.script){
+    showToast('⚠️ GAS環境でのみ使用できます');return;
+  }
+  showToast('📅 カレンダーに登録中...');
+  closeGcalModal();
+  google.script.run
+    .withSuccessHandler(res=>{
+      try{
+        const r=JSON.parse(res);
+        if(r.success)showToast(`✅ ${r.created}件の予定を「${r.calendar}」に登録しました`);
+        else showToast('⚠️ '+r.error);
+      }catch(e){showToast('⚠️ レスポンスエラー');}
+    })
+    .withFailureHandler(err=>showToast('⚠️ '+err.message))
+    .createMilestoneCalendarEvents(
+      _gcalMachineId,
+      JSON.stringify(events),
+      calendarId||''
+    );
+}
+
 function switchLinkageTab(tab){
   document.getElementById('linkage-panel-url').style.display=tab==='url'?'':'none';
   document.getElementById('linkage-panel-sheet').style.display=tab==='sheet'?'':'none';
@@ -1686,7 +1844,7 @@ function renderDriveFilesSection(machineId, updateOnly){
 }
 
 /* ============================================================
-   GANTT DRAG
+   GANTT DRAG / RESIZE
 ============================================================ */
 const GANTT_START = new Date('2026-03-01');
 const GANTT_END   = new Date('2026-09-30');
@@ -1694,25 +1852,48 @@ const GANTT_TOTAL = (GANTT_END-GANTT_START)/86400000; // 213
 
 let ganttDrag=null;
 
-function startGanttDrag(e){
-  const bar=e.currentTarget;
+function _clampGantt(d){
+  return new Date(Math.max(Math.min(d.getTime(),GANTT_END.getTime()),GANTT_START.getTime()));
+}
+function _datePct(d){
+  return (d-GANTT_START)/(GANTT_TOTAL*86400000)*100;
+}
+function _pctToDate(pct){
+  const ms=GANTT_START.getTime()+pct/100*GANTT_TOTAL*86400000;
+  return _clampGantt(new Date(ms));
+}
+
+// mode: 'move' | 'left' | 'right'
+function startGanttMoveOrResize(e, mode){
+  e.stopPropagation();
+  // Walk up to the .gantt-bar element
+  let bar=e.target;
+  while(bar&&!bar.classList.contains('gantt-bar'))bar=bar.parentElement;
+  if(!bar)return;
   const machineId=bar.dataset.machine;
   const phaseKey=bar.dataset.phase;
+  const prevKey=bar.dataset.prev||'';
   if(!machineId||!phaseKey)return;
-  const dateStr=state.schedules[machineId]?.[phaseKey];
-  if(!dateStr)return;
+  const endDateStr=state.schedules[machineId]?.[phaseKey];
+  if(!endDateStr)return;
   e.preventDefault();
   const timeline=bar.parentElement;
   const rect=timeline.getBoundingClientRect();
-  // Store bar's current width (%) so we can slide the whole bar
-  const barW=parseFloat(bar.style.width)||0;
+  const cw=rect.width;
+  const endDate=new Date(endDateStr);
+  // prevKey start date (for left-resize and move)
+  const prevDateStr=prevKey?state.schedules[machineId]?.[prevKey]:null;
+  const startDate=prevDateStr?new Date(prevDateStr):new Date(endDate.getTime()-10*86400000);
+
   ganttDrag={
-    bar,machineId,phaseKey,
+    bar, machineId, phaseKey, prevKey, mode,
     startX:e.clientX,
-    startDate:new Date(dateStr),
-    containerWidth:rect.width,
-    barWidthPct:barW,
-    pendingDate:null,
+    containerWidth:cw,
+    origEndDate:new Date(endDate),
+    origStartDate:new Date(startDate),
+    origLeftPct:parseFloat(bar.style.left)||0,
+    origWidthPct:parseFloat(bar.style.width)||2,
+    pendingEnd:null, pendingStart:null,
   };
   bar.classList.add('dragging');
   document.addEventListener('mousemove',onGanttMouseMove);
@@ -1721,35 +1902,81 @@ function startGanttDrag(e){
 
 function onGanttMouseMove(e){
   if(!ganttDrag)return;
-  const {bar,startX,startDate,containerWidth,barWidthPct}=ganttDrag;
+  const {bar,machineId,phaseKey,prevKey,mode,startX,containerWidth,
+         origEndDate,origStartDate,origLeftPct,origWidthPct}=ganttDrag;
   const deltaX=e.clientX-startX;
   const deltaDays=Math.round(deltaX/containerWidth*GANTT_TOTAL);
-  const newDate=new Date(startDate);
-  newDate.setDate(newDate.getDate()+deltaDays);
-  const clamped=new Date(Math.max(Math.min(newDate,GANTT_END),GANTT_START));
-  // Milestone is at the RIGHT edge of the bar; slide bar as a unit
-  const endPct=(clamped-GANTT_START)/(GANTT_TOTAL*86400000)*100;
-  const startPct=Math.max(0,endPct-barWidthPct);
-  bar.style.left=`${startPct}%`;
-  ganttDrag.pendingDate=fmtDate(clamped);
-  // Tooltip
   const tip=document.getElementById('gantt-tooltip');
-  const m=clamped.getMonth()+1,d=clamped.getDate();
-  tip.textContent=`${PHASE_LABELS[ganttDrag.phaseKey]}: ${m}/${d}`;
   tip.style.display='block';
   tip.style.left=(e.clientX+12)+'px';
   tip.style.top=(e.clientY-28)+'px';
+
+  if(mode==='move'){
+    // Shift both start and end by the same delta
+    const newEnd=_clampGantt(new Date(origEndDate.getTime()+deltaDays*86400000));
+    const newStart=_clampGantt(new Date(origStartDate.getTime()+deltaDays*86400000));
+    const endPct=_datePct(newEnd);
+    const startPct=_datePct(newStart);
+    bar.style.left=`${startPct.toFixed(2)}%`;
+    bar.style.width=`${Math.max(endPct-startPct,0.8).toFixed(2)}%`;
+    ganttDrag.pendingEnd=fmtDate(newEnd);
+    ganttDrag.pendingStart=prevKey?fmtDate(newStart):null;
+    const lbl=bar.querySelector('.gantt-bar-label');
+    const shortPhase=PHASE_LABELS[phaseKey]||phaseKey;
+    if(lbl)lbl.textContent=`${shortPhase.replace('見本機','').replace('量産','')} ${newEnd.getMonth()+1}/${newEnd.getDate()}`;
+    tip.textContent=`📦 ${shortPhase} 移動 → ${newEnd.getMonth()+1}/${newEnd.getDate()}`;
+
+  } else if(mode==='right'){
+    // Resize right edge: change end date only
+    const newEnd=_clampGantt(new Date(origEndDate.getTime()+deltaDays*86400000));
+    const startPct=origLeftPct;
+    const endPct=_datePct(newEnd);
+    if(endPct<=startPct+0.5)return; // don't collapse
+    bar.style.width=`${Math.max(endPct-startPct,0.8).toFixed(2)}%`;
+    ganttDrag.pendingEnd=fmtDate(newEnd);
+    ganttDrag.pendingStart=null;
+    const lbl=bar.querySelector('.gantt-bar-label');
+    const shortPhase=(PHASE_LABELS[phaseKey]||phaseKey).replace('見本機','').replace('量産','');
+    if(lbl)lbl.textContent=`${shortPhase} ${newEnd.getMonth()+1}/${newEnd.getDate()}`;
+    tip.textContent=`→ 終了: ${newEnd.getMonth()+1}/${newEnd.getDate()} (${deltaDays>0?'+':''+ deltaDays}日)`;
+
+  } else if(mode==='left'&&prevKey){
+    // Resize left edge: change start (prevKey) date only
+    const newStart=_clampGantt(new Date(origStartDate.getTime()+deltaDays*86400000));
+    const endPct=_datePct(origEndDate);
+    const startPct=_datePct(newStart);
+    if(startPct>=endPct-0.5)return; // don't collapse
+    bar.style.left=`${startPct.toFixed(2)}%`;
+    bar.style.width=`${Math.max(endPct-startPct,0.8).toFixed(2)}%`;
+    ganttDrag.pendingStart=fmtDate(newStart);
+    ganttDrag.pendingEnd=null;
+    tip.textContent=`← 開始: ${newStart.getMonth()+1}/${newStart.getDate()} (${deltaDays>0?'+':''+ deltaDays}日)`;
+  }
 }
 
 function onGanttMouseUp(){
   if(!ganttDrag)return;
-  const {bar,machineId,phaseKey,pendingDate}=ganttDrag;
+  const {bar,machineId,phaseKey,prevKey,pendingEnd,pendingStart}=ganttDrag;
   bar.classList.remove('dragging');
-  document.getElementById('gantt-tooltip').style.display='none';
-  if(pendingDate){
-    state.schedules[machineId][phaseKey]=pendingDate;
-    addLog(`${machineId} ${PHASE_LABELS[phaseKey]} → ${pendingDate}`);
-    showToast(`✅ ${machineId} ${PHASE_LABELS[phaseKey]}: ${pendingDate}`);
+  const tip=document.getElementById('gantt-tooltip');
+  if(tip)tip.style.display='none';
+
+  let changed=false;
+  if(pendingEnd){
+    state.schedules[machineId][phaseKey]=pendingEnd;
+    addLog(`${machineId} ${PHASE_LABELS[phaseKey]||phaseKey} → ${pendingEnd}`);
+    changed=true;
+  }
+  if(pendingStart&&prevKey){
+    state.schedules[machineId][prevKey]=pendingStart;
+    addLog(`${machineId} ${PHASE_LABELS[prevKey]||prevKey} → ${pendingStart}`);
+    changed=true;
+  }
+  if(changed){
+    const msgs=[];
+    if(pendingEnd)msgs.push(`${(PHASE_LABELS[phaseKey]||phaseKey).replace('見本機','').replace('量産','')}: ${pendingEnd.slice(5).replace('-','/')}`);
+    if(pendingStart&&prevKey)msgs.push(`開始: ${pendingStart.slice(5).replace('-','/')}`);
+    showToast(`✅ ${machineId} ${msgs.join(' / ')}`);
     saveToGAS();
     renderPage('schedule');
   }
@@ -1757,6 +1984,9 @@ function onGanttMouseUp(){
   document.removeEventListener('mouseup',onGanttMouseUp);
   ganttDrag=null;
 }
+
+// keep backward-compat alias
+function startGanttDrag(e){ startGanttMoveOrResize(e,'move'); }
 
 /* ============================================================
    ECO DRAG & DROP
@@ -2299,13 +2529,15 @@ function renderSchedule(){
       const color=done?'#94a3b8':bar.color;
       const outline=near?`outline:2px solid #fbbf24;outline-offset:1px;`:'';
       const shortLabel=bar.label.replace('見本機','').replace('量産','');
+      const prevKey=def.prevKey||'';
       return`<div class="gantt-bar"
-        data-machine="${m.id}" data-phase="${bar.key}"
-        style="left:${bar.startPct.toFixed(2)}%;width:${bar.widthPct.toFixed(2)}%;top:${top}px;height:${BAR_H}px;background:${color};${outline}"
-        onmousedown="startGanttDrag(event)"
+        data-machine="${m.id}" data-phase="${bar.key}" data-prev="${prevKey}"
+        style="left:${bar.startPct.toFixed(2)}%;width:${bar.widthPct.toFixed(2)}%;top:${top}px;height:${BAR_H}px;background:${color};${outline}cursor:grab;display:flex;align-items:center;"
+        onmousedown="startGanttMoveOrResize(event,'move')"
         title="${bar.label}: ${fmtD(bar.dateStr)}${done?' ✅':''}${near?' ⚠️直近':''}">
-        <span style="overflow:hidden;text-overflow:ellipsis;">${shortLabel} ${fmtD(bar.dateStr)}</span>
-        <span class="gantt-bar-end-tick"></span>
+        <div class="gantt-resize-handle gantt-resize-left" onmousedown="startGanttMoveOrResize(event,'left')"></div>
+        <span class="gantt-bar-label">${shortLabel} ${fmtD(bar.dateStr)}</span>
+        <div class="gantt-resize-handle gantt-resize-right" onmousedown="startGanttMoveOrResize(event,'right')"></div>
       </div>`;
     }).join('');
 
@@ -2327,7 +2559,7 @@ function renderSchedule(){
     <div class="page-heading">
       <div>
         <h2>📅 スケジュール</h2>
-        <p>2026年3月〜9月 ｜ 今日: ${fmtD(TODAY)} ｜ バーをドラッグして日程変更 ｜ 日程が重なる場合はレーンを分けて表示</p>
+        <p>2026年3月〜9月 ｜ 今日: ${fmtD(TODAY)} ｜ <strong>バー中央ドラッグ</strong>で移動 ｜ <strong>左右端ドラッグ</strong>で期間変更 ｜ 日程重複時はレーン分け表示</p>
       </div>
     </div>
     <div class="gantt-container">
@@ -3069,8 +3301,9 @@ function renderMilestoneSection(machineId){
         <h4 style="margin-bottom:2px;">🎯 ゴール逆算スケジュール</h4>
         <div style="font-size:10px;color:rgba(255,255,255,.6);">初回納品まで <strong style="font-size:14px;color:${goalDiff!==null&&goalDiff<=30?'#fbbf24':'#fff'};">${goalDiff!==null?goalDiff+'日':'—'}</strong></div>
       </div>
-      <div style="display:flex;align-items:center;gap:8px;">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
         ${linkageHtml}
+        <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);" onclick="openGcalModal('${machineId}')">📅 カレンダー登録</button>
         <button class="btn btn-sm" style="background:rgba(255,255,255,.15);color:#fff;border:1px solid rgba(255,255,255,.3);" onclick="openMilestoneModal('${machineId}')">⚙️ 設定</button>
       </div>
     </div>

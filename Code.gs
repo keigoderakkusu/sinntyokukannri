@@ -87,6 +87,49 @@ function getLinkageData(url) {
 }
 
 /* ============================================================
+   GOOGLE CALENDAR EXPORT
+============================================================ */
+/**
+ * マイルストーン日程をGoogleカレンダーに登録
+ * @param {string} machineId - 機種名
+ * @param {string} eventsJson - [{title,date,description,emailDays,icon}]
+ * @param {string} calendarId - カレンダーID（空=デフォルト）
+ */
+function createMilestoneCalendarEvents(machineId, eventsJson, calendarId) {
+  try {
+    var events = JSON.parse(eventsJson);
+    var cal = (calendarId && calendarId.trim())
+      ? CalendarApp.getCalendarById(calendarId.trim())
+      : CalendarApp.getDefaultCalendar();
+
+    if (!cal) return JSON.stringify({ success: false, error: 'カレンダーが見つかりません。IDを確認してください。' });
+
+    var results = [];
+    events.forEach(function(ev) {
+      var parts = ev.date.split('-');
+      var d = new Date(parseInt(parts[0]), parseInt(parts[1])-1, parseInt(parts[2]));
+      var gcEvent = cal.createAllDayEvent(ev.title, d, {
+        description: ev.description || '',
+      });
+      // メールリマインダー（N日前）
+      var emailDays = parseInt(ev.emailDays) || 7;
+      try { gcEvent.addEmailReminder(emailDays * 24 * 60); } catch(e){}
+      // ポップアップリマインダー（1日前）
+      try { gcEvent.addPopupReminder(24 * 60); } catch(e){}
+      results.push({ title: ev.title, date: ev.date });
+    });
+
+    return JSON.stringify({
+      success: true,
+      created: results.length,
+      calendar: cal.getName(),
+    });
+  } catch (e) {
+    return JSON.stringify({ success: false, error: e.message });
+  }
+}
+
+/* ============================================================
    DRIVE FILE UPLOAD
 ============================================================ */
 function uploadFileToDrive(fileName, base64Data, mimeType, machineId) {
