@@ -5,6 +5,10 @@
  * rpaHandleChuzan()     — 中残処理
  * rpaHandleQuote()      — 見積依頼
  * rpaHandleBOM()        — 構成表
+ * rpaHandleChuzanShiryo()— 注残資料作成依頼
+ * rpaHandleKanagata()   — 金型処理依頼
+ * rpaHandleBomSofu()    — 構成表送付
+ * rpaHandleQuoteCreate()— 見積書作成依頼
  * ============================================================
  */
 
@@ -278,4 +282,94 @@ function _buildInternalHtml({ title, color, fields, bodyPreview, actions, extra 
   </div>
 </div>
 </body></html>`;
+}
+
+// ============================================================
+// 件名キーワード分類 用 共通ハンドラー
+// ============================================================
+// 件名「機種ID＋キーワード」型の依頼（注残資料作成依頼／金型処理依頼／
+// 構成表送付／見積書作成依頼）を、お客様への自動返信は行わず、
+// 社内通知＋振り分け（業務フロー登録）のみ行う。
+function _handleSubjectKeywordType(msg, cls, title, color, actions) {
+  const machineId = cls.machineId || '（機種不明）';
+  const sender    = msg.getFrom();
+  const subject   = msg.getSubject();
+  const received  = new Date().toLocaleString('ja-JP');
+  const urgencyLabel = cls.urgency === 'high' ? '🔴 至急' : cls.urgency === 'normal' ? '🟡 通常' : '🟢 低';
+
+  // 社内通知メール
+  const internalHtml = _buildInternalHtml({
+    title: title,
+    color: color,
+    fields: [
+      { label: '送信者',   value: sender },
+      { label: '件名',     value: subject },
+      { label: '機種',     value: `<strong>${machineId}</strong>` },
+      { label: '緊急度',   value: urgencyLabel },
+      { label: '受信日時', value: received },
+    ],
+    bodyPreview: msg.getPlainBody().substring(0, 800),
+    actions: actions,
+  });
+
+  RPA.notifyEmails.forEach(email => {
+    GmailApp.sendEmail(email, `【${title}${cls.urgency === 'high' ? ' ⚠️至急' : ''}】${machineId} — ${sender.replace(/<.*>/, '').trim()}`, '', {
+      htmlBody: internalHtml,
+    });
+  });
+
+  // 業務フロー（進捗管理）への登録
+  try {
+    addBusinessFlowStep(cls.machineId, cls.type, sender);
+  } catch (e) {
+    Logger.log('addBusinessFlowStep error: ' + e.message);
+  }
+
+  // 進捗管理ログへ記録
+  if (cls.machineId) {
+    rpaUpdateProgressLog(machineId, `${title}受信: ${cls.summary} (from: ${sender})`);
+  }
+
+  return { handled: true, type: cls.type, machineId: cls.machineId, summary: cls.summary };
+}
+
+// ============================================================
+// 4. 注残資料作成依頼ハンドラー
+// ============================================================
+function rpaHandleChuzanShiryo(msg, cls, attachments) {
+  return _handleSubjectKeywordType(msg, cls, '注残資料作成依頼', '#dc2626', [
+    '担当者にて内容を確認してください',
+    '必要に応じて委託先へ注残データの記入を依頼してください（業務フロータブから進捗確認できます）',
+    '資料作成後、提出をお願いします',
+  ]);
+}
+
+// ============================================================
+// 5. 金型処理依頼ハンドラー
+// ============================================================
+function rpaHandleKanagata(msg, cls, attachments) {
+  return _handleSubjectKeywordType(msg, cls, '金型処理依頼', '#d97706', [
+    '担当者にて金型の保管状況を確認してください',
+    '処理方法（廃棄／返却／保管継続）を決定し、手配をお願いします',
+  ]);
+}
+
+// ============================================================
+// 6. 構成表送付ハンドラー
+// ============================================================
+function rpaHandleBomSofu(msg, cls, attachments) {
+  return _handleSubjectKeywordType(msg, cls, '構成表送付', '#16a34a', [
+    '構成表の内容を確認してください',
+    'お客様へ構成表を送付してください',
+  ]);
+}
+
+// ============================================================
+// 7. 見積書作成依頼ハンドラー
+// ============================================================
+function rpaHandleQuoteCreate(msg, cls, attachments) {
+  return _handleSubjectKeywordType(msg, cls, '見積書作成依頼', '#0891b2', [
+    '見積条件（台数・単価・納期）を確認してください',
+    '見積書を作成し、社内承認後にお客様へ提出してください',
+  ]);
 }

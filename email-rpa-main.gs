@@ -72,10 +72,14 @@ function _classifyAndRoute(msg) {
   Logger.log(`分類: ${JSON.stringify(cls)}`);
 
   switch (cls.type) {
-    case '中残処理': return rpaHandleChuzan(msg, cls, attachments);
-    case '見積依頼': return rpaHandleQuote(msg, cls, attachments);
-    case '構成表':   return rpaHandleBOM(msg, cls, attachments);
-    default:         return { handled: false, type: 'その他', classification: cls };
+    case '中残処理':         return rpaHandleChuzan(msg, cls, attachments);
+    case '見積依頼':         return rpaHandleQuote(msg, cls, attachments);
+    case '構成表':           return rpaHandleBOM(msg, cls, attachments);
+    case '注残資料作成依頼': return rpaHandleChuzanShiryo(msg, cls, attachments);
+    case '金型処理依頼':     return rpaHandleKanagata(msg, cls, attachments);
+    case '構成表送付':       return rpaHandleBomSofu(msg, cls, attachments);
+    case '見積書作成依頼':   return rpaHandleQuoteCreate(msg, cls, attachments);
+    default:                 return { handled: false, type: 'その他', classification: cls };
   }
 }
 

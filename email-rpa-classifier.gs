@@ -20,12 +20,47 @@
  * }}
  */
 function rpaClassifyEmail(subject, body, sender) {
+  // 件名ベースの業務種別判定（注残資料作成依頼／金型処理依頼／構成表送付／
+  // 見積書作成依頼 など）を最優先で判定。「機種ID＋キーワード」のような
+  // 件名パターンを確実に拾うため、Geminiより前にチェックする。
+  const subjectMatch = _classifyBySubjectKeyword(subject);
+  if (subjectMatch) return subjectMatch;
+
   const apiKey = RPA.geminiKey;
   if (apiKey) {
     const result = _classifyWithGemini(subject, body, sender, apiKey);
     if (result) return result;
   }
   return _classifyByKeyword(subject, body);
+}
+
+// ── 件名キーワード分類（最優先） ────────────────────────────
+// 「A86仮注残資料作成依頼」のような「機種ID＋キーワード」の件名を検出
+function _classifyBySubjectKeyword(subject) {
+  const text = subject.replace(/\s/g, '');
+
+  const SUBJECT_RULES = [
+    { type: '注残資料作成依頼', pattern: /(仮)?注残.*(資料|作成|依頼)/i },
+    { type: '金型処理依頼',     pattern: /金型.*(処理|依頼)/i },
+    { type: '構成表送付',       pattern: /構成表.*(送付|送信|提出)/i },
+    { type: '見積書作成依頼',   pattern: /見積書?.*(作成依頼|依頼)/i },
+  ];
+
+  for (const rule of SUBJECT_RULES) {
+    if (rule.pattern.test(text)) {
+      return {
+        type: rule.type,
+        machineId: _extractMachineId(text),
+        quantity: _extractQuantity(text),
+        requestDate: null,
+        urgency: /至急|急ぎ|本日中|asap/i.test(text) ? 'high' : 'normal',
+        summary: `${rule.type}（件名キーワード検出）`,
+        confidence: 0.9,
+        source: 'subject-keyword',
+      };
+    }
+  }
+  return null;
 }
 
 // ── Gemini API 呼び出し ─────────────────────────────────────
