@@ -782,29 +782,49 @@ select:focus{border-color:var(--primary);}
           <label>📊 生産計画（Excel）</label>
           <div style="display:flex;gap:6px;">
             <input type="url" id="edit-productionPlanUrl" placeholder="Google Drive / SharePoint URL" style="flex:1;">
+            <label class="btn btn-sm" title="Driveにアップロード" style="cursor:pointer;white-space:nowrap;padding:4px 8px;">
+              📁
+              <input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="uploadEditDocFile(event,'edit-productionPlanUrl')">
+            </label>
             <button class="btn btn-sm" onclick="openDocLink('edit-productionPlanUrl')" title="開く">↗</button>
           </div>
+          <div id="edit-productionPlanUrl-status" style="font-size:11px;color:var(--success);margin-top:2px;min-height:14px;"></div>
         </div>
         <div class="form-field" style="margin-bottom:6px;">
           <label>📋 納入指示書（Excel）</label>
           <div style="display:flex;gap:6px;">
             <input type="url" id="edit-deliveryOrderUrl" placeholder="Google Drive / SharePoint URL" style="flex:1;">
+            <label class="btn btn-sm" title="Driveにアップロード" style="cursor:pointer;white-space:nowrap;padding:4px 8px;">
+              📁
+              <input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="uploadEditDocFile(event,'edit-deliveryOrderUrl')">
+            </label>
             <button class="btn btn-sm" onclick="openDocLink('edit-deliveryOrderUrl')" title="開く">↗</button>
           </div>
+          <div id="edit-deliveryOrderUrl-status" style="font-size:11px;color:var(--success);margin-top:2px;min-height:14px;"></div>
         </div>
         <div class="form-field" style="margin-bottom:6px;">
           <label>🗂 構成表（Excel）</label>
           <div style="display:flex;gap:6px;">
             <input type="url" id="edit-bomUrl" placeholder="Google Drive / SharePoint URL" style="flex:1;">
+            <label class="btn btn-sm" title="Driveにアップロード" style="cursor:pointer;white-space:nowrap;padding:4px 8px;">
+              📁
+              <input type="file" accept=".xlsx,.xls,.csv" style="display:none" onchange="uploadEditDocFile(event,'edit-bomUrl')">
+            </label>
             <button class="btn btn-sm" onclick="openDocLink('edit-bomUrl')" title="開く">↗</button>
           </div>
+          <div id="edit-bomUrl-status" style="font-size:11px;color:var(--success);margin-top:2px;min-height:14px;"></div>
         </div>
         <div class="form-field" style="margin-bottom:6px;">
           <label>📄 機種仕様書（PDF）</label>
           <div style="display:flex;gap:6px;">
             <input type="url" id="edit-specUrl" placeholder="Google Drive / SharePoint URL" style="flex:1;">
+            <label class="btn btn-sm" title="Driveにアップロード" style="cursor:pointer;white-space:nowrap;padding:4px 8px;">
+              📁
+              <input type="file" accept=".pdf,.doc,.docx" style="display:none" onchange="uploadEditDocFile(event,'edit-specUrl')">
+            </label>
             <button class="btn btn-sm" onclick="openDocLink('edit-specUrl')" title="開く">↗</button>
           </div>
+          <div id="edit-specUrl-status" style="font-size:11px;color:var(--success);margin-top:2px;min-height:14px;"></div>
         </div>
         <div class="form-field" style="margin-bottom:6px;">
           <label>💰 見積書リンク（見積管理システム）</label>
@@ -1854,6 +1874,47 @@ function handleDriveUpload(event, machineId){
         .withFailureHandler(err=>showToast('⚠️ '+err.message))
         .uploadFileToDrive(file.name, base64, file.type||'application/octet-stream', machineId);
     }else{showToast('⚠️ GAS環境でのみアップロード可能です');}
+  };
+  reader.readAsDataURL(file);
+}
+
+/* 編集モーダルのドキュメントフィールドへDriveアップロード */
+function uploadEditDocFile(event, inputId){
+  const file=event.target.files[0];
+  if(!file)return;
+  event.target.value='';
+  if(file.size>20*1024*1024){showToast('⚠️ ファイルサイズは20MB以下にしてください');return;}
+  const statusEl=document.getElementById(inputId+'-status');
+  if(statusEl)statusEl.textContent='⏳ アップロード中…';
+  const reader=new FileReader();
+  reader.onload=function(ev){
+    const base64=ev.target.result.split(',')[1];
+    const machineId=editingId||'doc';
+    if(typeof google!=='undefined'&&google.script){
+      google.script.run
+        .withSuccessHandler(res=>{
+          try{
+            const r=JSON.parse(res);
+            if(r.success){
+              const inp=document.getElementById(inputId);
+              if(inp)inp.value=r.url;
+              if(statusEl)statusEl.innerHTML=`✅ <a href="${r.url}" target="_blank" style="color:var(--success);">${r.fileName}</a>`;
+              showToast('✅ アップロード完了: '+r.fileName);
+            }else{
+              if(statusEl)statusEl.textContent='⚠️ '+r.error;
+              showToast('⚠️ '+r.error);
+            }
+          }catch(e){if(statusEl)statusEl.textContent='⚠️ レスポンスエラー';}
+        })
+        .withFailureHandler(err=>{
+          if(statusEl)statusEl.textContent='⚠️ '+err.message;
+          showToast('⚠️ '+err.message);
+        })
+        .uploadFileToDrive(file.name, base64, file.type||'application/octet-stream', machineId);
+    }else{
+      if(statusEl)statusEl.textContent='⚠️ GAS環境でのみアップロード可能です';
+      showToast('⚠️ GAS環境でのみアップロード可能です');
+    }
   };
   reader.readAsDataURL(file);
 }
