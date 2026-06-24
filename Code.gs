@@ -235,6 +235,102 @@ function getLinkageDataFromSheet(spreadsheetId, sheetName) {
   }
 }
 
+/* ============================================================
+   SPREADSHEET → MACHINES AUTO SYNC
+============================================================ */
+function syncMachinesFromSheet(spreadsheetId, sheetName) {
+  if (!spreadsheetId) return JSON.stringify({ __error: true, message: 'スプレッドシートIDが未指定です' });
+  try {
+    var ss = SpreadsheetApp.openById(spreadsheetId.trim());
+    var sheet;
+    if (sheetName && sheetName.trim()) {
+      sheet = ss.getSheetByName(sheetName.trim());
+    } else {
+      // gid指定がある場合は全シートから探す
+      sheet = ss.getActiveSheet();
+    }
+    if (!sheet) return JSON.stringify({ __error: true, message: 'シートが見つかりません: ' + (sheetName || '(default)') });
+
+    var data = sheet.getDataRange().getValues();
+    if (data.length < 2) return JSON.stringify({ __error: true, message: 'データが2行未満です' });
+
+    var headers = data[0].map(function(h){ return String(h).trim(); });
+
+    var COL = {
+      id:           ['機種名','機種ID','機種コード','型式','モデル','id','machineId'],
+      person:       ['担当者','担当','営業担当','person'],
+      compliance:   ['適合','適合状況','型式適合','compliance'],
+      prodQty:      ['量産台数','台数','生産台数','数量','prodQty','qty'],
+      rom:          ['ROM','ロム','rom','ROM種類'],
+      status:       ['ステータス','状態','進捗','status'],
+      sampleImpl:   ['見本機実装','見本実装','サンプル実装','sampleImpl'],
+      sampleAssy:   ['見本機組立','見本組立','サンプル組立','sampleAssy'],
+      sampleShip:   ['見本機出荷','見本出荷','サンプル出荷','sampleShip'],
+      prodImpl:     ['量産実装','prodImpl'],
+      prodAssy:     ['量産組立','prodAssy'],
+      prodShip:     ['量産出荷','prodShip','出荷日','出荷予定'],
+      boards:       ['基板','基板情報','boards','基板構成'],
+      notes:        ['備考','メモ','notes','コメント'],
+      goalDate:     ['初回納品日','ゴール','納品日','goalDate'],
+    };
+
+    var colIdx = {};
+    Object.keys(COL).forEach(function(field) {
+      colIdx[field] = -1;
+      COL[field].forEach(function(c) {
+        if (colIdx[field] < 0) {
+          var i = headers.indexOf(c);
+          if (i >= 0) colIdx[field] = i;
+        }
+      });
+    });
+
+    if (colIdx.id < 0) {
+      return JSON.stringify({ __error: true, message: '機種名の列が見つかりません。ヘッダー行に「機種名」「機種ID」等の列名が必要です。\n検出されたヘッダー: ' + headers.join(', ') });
+    }
+
+    var machines = [];
+    for (var r = 1; r < data.length; r++) {
+      var row = data[r];
+      var mid = colIdx.id >= 0 ? String(row[colIdx.id] || '').trim() : '';
+      if (!mid) continue;
+
+      var m = {
+        id: mid,
+        person:     colIdx.person     >= 0 ? String(row[colIdx.person] || '')     : '',
+        compliance: colIdx.compliance >= 0 ? String(row[colIdx.compliance] || '') : '',
+        prodQty:    colIdx.prodQty    >= 0 ? String(row[colIdx.prodQty] || '')    : '',
+        rom:        colIdx.rom        >= 0 ? String(row[colIdx.rom] || '')        : '',
+        status:     colIdx.status     >= 0 ? String(row[colIdx.status] || '')     : '',
+        sampleImpl: colIdx.sampleImpl >= 0 ? _fmtCellDate(row[colIdx.sampleImpl]) : '',
+        sampleAssy: colIdx.sampleAssy >= 0 ? _fmtCellDate(row[colIdx.sampleAssy]) : '',
+        sampleShip: colIdx.sampleShip >= 0 ? _fmtCellDate(row[colIdx.sampleShip]) : '',
+        prodImpl:   colIdx.prodImpl   >= 0 ? _fmtCellDate(row[colIdx.prodImpl])   : '',
+        prodAssy:   colIdx.prodAssy   >= 0 ? _fmtCellDate(row[colIdx.prodAssy])   : '',
+        prodShip:   colIdx.prodShip   >= 0 ? _fmtCellDate(row[colIdx.prodShip])   : '',
+        notes:      colIdx.notes      >= 0 ? String(row[colIdx.notes] || '')      : '',
+        boards:     colIdx.boards     >= 0 ? String(row[colIdx.boards] || '')     : '',
+        goalDate:   colIdx.goalDate   >= 0 ? _fmtCellDate(row[colIdx.goalDate])   : '',
+        rowIndex: r + 1,
+      };
+      machines.push(m);
+    }
+
+    return JSON.stringify({
+      success: true,
+      machines: machines,
+      total: machines.length,
+      sheetName: sheet.getName(),
+      detectedColumns: Object.keys(colIdx).filter(function(k){ return colIdx[k] >= 0; }),
+      headers: headers,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    return JSON.stringify({ __error: true, message: e.message,
+      hint: 'スプレッドシートIDを確認するか、このGASアカウントにシートの閲覧権限があるか確認してください。' });
+  }
+}
+
 function _fmtCellDate(v) {
   if (!v) return '';
   if (v instanceof Date) {

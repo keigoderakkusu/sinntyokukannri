@@ -1073,7 +1073,7 @@ const state = {
   logs:[],
   selectedMachine:'D59B',
   flowMachine:MACHINES[0].id,
-  config:{linkageUrl:'', notifyEmail:'', notifyThreshold:50, appUrl:'', linkageSheetId:'', linkageSheetName:'', tabSettings:{}},
+  config:{linkageUrl:'', notifyEmail:'', notifyThreshold:50, appUrl:'', linkageSheetId:'', linkageSheetName:'', tabSettings:{}, syncSheetId:'', syncSheetName:''},
   linkageData:null,
   linkageUrlOverrides:{}, // { "machineId_rowKey": {quoteUrl, orderUrl} }
   customFlows:{},
@@ -1702,6 +1702,170 @@ function saveLinkageUrl(){
   state.config.linkageUrl=url;
   saveToGAS();
   showToast('✅ URLを保存しました');
+}
+
+/* ============================================================
+   SPREADSHEET AUTO SYNC
+============================================================ */
+function saveSyncSettings(){
+  state.config.syncSheetId=document.getElementById('sync-sheet-id')?.value?.trim()||'';
+  state.config.syncSheetName=document.getElementById('sync-sheet-name')?.value?.trim()||'';
+  saveToGAS();
+  showToast('✅ 同期設定を保存しました');
+}
+
+function _callSyncSheet(callback){
+  const sheetId=document.getElementById('sync-sheet-id')?.value?.trim()||'';
+  const sheetName=document.getElementById('sync-sheet-name')?.value?.trim()||'';
+  if(!sheetId){showToast('⚠️ スプレッドシートIDを入力してください');return;}
+  state.config.syncSheetId=sheetId;
+  state.config.syncSheetName=sheetName;
+  const div=document.getElementById('sync-preview');
+  if(div)div.innerHTML='<div style="padding:12px;color:var(--text-sub);font-size:12px;">📡 スプレッドシートを読み込み中...</div>';
+  if(typeof google!=='undefined'&&google.script){
+    google.script.run
+      .withSuccessHandler(res=>{
+        try{
+          const r=JSON.parse(res);
+          if(r.__error){
+            if(div)div.innerHTML=`<div style="padding:12px;color:var(--danger);font-size:12px;">⚠️ ${r.message}${r.hint?'<br>'+r.hint:''}</div>`;
+            return;
+          }
+          callback(r, div);
+        }catch(e){if(div)div.innerHTML=`<div style="padding:12px;color:var(--danger);font-size:12px;">⚠️ パースエラー</div>`;}
+      })
+      .withFailureHandler(err=>{if(div)div.innerHTML=`<div style="padding:12px;color:var(--danger);font-size:12px;">⚠️ ${err.message}</div>`;})
+      .syncMachinesFromSheet(sheetId, sheetName);
+  }else{
+    if(div)div.innerHTML='<div style="padding:12px;color:var(--danger);font-size:12px;">⚠️ GAS環境でのみ動作します</div>';
+  }
+}
+
+function _buildSyncDiff(sheetMachines){
+  const changes=[];
+  sheetMachines.forEach(sm=>{
+    const existing=MACHINES.find(m=>m.id===sm.id);
+    if(!existing){
+      changes.push({type:'add', id:sm.id, machine:sm, fields:[]});
+    }else{
+      const updated=[];
+      const MAP=[
+        ['person','担当者'],['compliance','適合'],['prodQty','量産台数'],['rom','ROM'],
+        ['sampleImpl','見本機実装'],['sampleAssy','見本機組立'],['sampleShip','見本機出荷'],
+        ['prodImpl','量産実装'],['prodAssy','量産組立'],['prodShip','量産出荷'],
+        ['notes','備考'],
+      ];
+      MAP.forEach(([key,label])=>{
+        const newVal=sm[key]||'';
+        if(!newVal)return;
+        const oldVal=String(existing[key]||'');
+        if(newVal!==oldVal)updated.push({key,label,oldVal:oldVal||'(空)',newVal});
+      });
+      if(sm.status){
+        const oldStatus=state.statuses[sm.id]||'';
+        if(sm.status!==oldStatus)updated.push({key:'_status',label:'ステータス',oldVal:oldStatus||'(空)',newVal:sm.status});
+      }
+      if(sm.goalDate){
+        const oldGoal=state.milestones[sm.id]?.goalDate||'';
+        if(sm.goalDate!==oldGoal)updated.push({key:'_goalDate',label:'初回納品日',oldVal:oldGoal||'(空)',newVal:sm.goalDate});
+      }
+      if(updated.length)changes.push({type:'update', id:sm.id, machine:sm, fields:updated});
+    }
+  });
+  return changes;
+}
+
+function previewSheetSync(){
+  _callSyncSheet((r, div)=>{
+    const diff=_buildSyncDiff(r.machines);
+    if(!diff.length){
+      div.innerHTML=`<div style="padding:16px;text-align:center;color:var(--success);font-size:13px;font-weight:600;">✅ 差分なし — スプレッドシートとシステムは同期済みです（${r.total}機種）</div>`;
+      return;
+    }
+    const adds=diff.filter(d=>d.type==='add');
+    const updates=diff.filter(d=>d.type==='update');
+    let html=`<div style="font-size:12px;font-weight:700;margin-bottom:8px;">📊 同期プレビュー — ${r.total}機種中 ${diff.length}件の変更</div>`;
+    if(adds.length){
+      html+=`<div style="margin-bottom:8px;"><span style="background:var(--success);color:#fff;border-radius:4px;font-size:10px;padding:2px 8px;">＋ 新規 ${adds.length}件</span></div>`;
+      html+=`<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px;">
+        <tr style="background:#f0fdf4;"><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">機種名</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">担当</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">台数</th></tr>
+        ${adds.map(a=>`<tr><td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;font-weight:700;">${a.id}</td><td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${a.machine.person||'—'}</td><td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${a.machine.prodQty||'—'}</td></tr>`).join('')}
+      </table>`;
+    }
+    if(updates.length){
+      html+=`<div style="margin-bottom:8px;"><span style="background:var(--primary);color:#fff;border-radius:4px;font-size:10px;padding:2px 8px;">✏️ 更新 ${updates.length}件</span></div>`;
+      html+=`<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:12px;">
+        <tr style="background:#eff6ff;"><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">機種</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">項目</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">現在値</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">→ 新値</th></tr>
+        ${updates.flatMap(u=>u.fields.map((f,i)=>`<tr><td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;${i===0?'font-weight:700;':''}">${i===0?u.id:''}</td><td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${f.label}</td><td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;color:var(--text-muted);text-decoration:line-through;">${f.oldVal}</td><td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;color:var(--primary);font-weight:600;">${f.newVal}</td></tr>`)).join('')}
+      </table>`;
+    }
+    html+=`<div style="margin-top:8px;font-size:11px;color:var(--text-sub);">検出されたヘッダー列: ${r.detectedColumns.join(', ')}</div>`;
+    html+=`<button class="btn btn-primary btn-sm" onclick="execSheetSync()" style="margin-top:10px;">✅ この内容で同期を実行</button>`;
+    div.innerHTML=html;
+  });
+}
+
+function execSheetSync(){
+  _callSyncSheet((r, div)=>{
+    const diff=_buildSyncDiff(r.machines);
+    let addCount=0, updateCount=0;
+
+    diff.forEach(d=>{
+      if(d.type==='add'){
+        const sm=d.machine;
+        MACHINES.push({
+          id:sm.id, person:sm.person||'', compliance:sm.compliance||'',
+          prodQty:sm.prodQty||'', rom:sm.rom||'',
+          sampleImpl:sm.sampleImpl||null, sampleAssy:sm.sampleAssy||null, sampleShip:sm.sampleShip||null,
+          prodImpl:sm.prodImpl||null, prodAssy:sm.prodAssy||null, prodShip:sm.prodShip||null,
+          boards:[], notes:sm.notes||'',
+        });
+        state.statuses[sm.id]=sm.status||'量産前';
+        state.schedules[sm.id]={
+          sampleImpl:sm.sampleImpl||null,sampleAssy:sm.sampleAssy||null,sampleShip:sm.sampleShip||null,
+          prodImpl:sm.prodImpl||null,prodAssy:sm.prodAssy||null,prodShip:sm.prodShip||null,
+        };
+        state.eco[sm.id]={collection:0,disassembly:0,e_inspect:0,snb_inspect:0,assembly:0,delivered:0};
+        state.notes[sm.id]=sm.notes||'';
+        if(sm.goalDate){
+          if(!state.milestones[sm.id])state.milestones[sm.id]={};
+          state.milestones[sm.id].goalDate=sm.goalDate;
+        }
+        addLog(`📡 同期: ${sm.id} を新規追加`);
+        addCount++;
+      }else if(d.type==='update'){
+        const sm=d.machine;
+        const m=MACHINES.find(x=>x.id===sm.id);
+        d.fields.forEach(f=>{
+          if(f.key==='_status'){
+            state.statuses[sm.id]=f.newVal;
+          }else if(f.key==='_goalDate'){
+            if(!state.milestones[sm.id])state.milestones[sm.id]={};
+            state.milestones[sm.id].goalDate=f.newVal;
+          }else{
+            if(m)m[f.key]=f.newVal;
+            if(['sampleImpl','sampleAssy','sampleShip','prodImpl','prodAssy','prodShip'].includes(f.key)){
+              if(state.schedules[sm.id])state.schedules[sm.id][f.key]=f.newVal||null;
+            }
+            if(f.key==='notes')state.notes[sm.id]=f.newVal;
+          }
+        });
+        addLog(`📡 同期: ${sm.id} を更新 (${d.fields.map(f=>f.label).join(',')})`);
+        updateCount++;
+      }
+    });
+
+    saveToGAS();
+    state.config.syncSheetId=document.getElementById('sync-sheet-id')?.value?.trim()||'';
+    state.config.syncSheetName=document.getElementById('sync-sheet-name')?.value?.trim()||'';
+    saveToGAS();
+
+    const msg=`✅ 同期完了: 新規 ${addCount}件、更新 ${updateCount}件（${r.sheetName}シート / ${r.total}機種）`;
+    showToast(msg);
+    if(div)div.innerHTML=`<div style="padding:14px;color:var(--success);font-size:13px;font-weight:600;">${msg}</div>`;
+    renderAdmin();
+    renderDashboard();
+  });
 }
 
 function saveLinkageSheetSettings(){
@@ -3961,6 +4125,45 @@ function renderAdmin(){
           <thead><tr><th>機種名</th><th>担当者</th><th>ステータス</th><th>量産台数</th><th>適合</th><th>操作</th></tr></thead>
           <tbody>${machineRows}</tbody>
         </table>
+      </div>
+    </div>
+
+    <!-- スプレッドシート自動同期 -->
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <h3>📡 スプレッドシート自動同期</h3>
+        <span id="sync-status-badge" style="font-size:11px;color:var(--text-muted);">${state.config.syncSheetId?'✅ 設定済':'⚠️ 未設定'}</span>
+      </div>
+      <div class="admin-section-body">
+        <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#1e40af;">
+          ℹ️ Googleスプレッドシートの最新データを自動的にシステムに取り込みます。<br>
+          既存の機種は更新、新規の機種は追加されます。手動変更は上書きされません（スプレッドシート側が空欄の項目はスキップ）。
+        </div>
+        <div style="display:flex;gap:8px;align-items:flex-end;margin-bottom:10px;flex-wrap:wrap;">
+          <div style="flex:1;min-width:300px;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-sub);display:block;margin-bottom:4px;">スプレッドシートID</label>
+            <input type="text" id="sync-sheet-id"
+              placeholder="URLの /d/ と /edit の間のID"
+              value="${state.config.syncSheetId||''}"
+              style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+          </div>
+          <div style="min-width:140px;">
+            <label style="font-size:11px;font-weight:600;color:var(--text-sub);display:block;margin-bottom:4px;">シート名（空欄=先頭シート）</label>
+            <input type="text" id="sync-sheet-name"
+              placeholder="Sheet1"
+              value="${state.config.syncSheetName||''}"
+              style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <button class="btn btn-primary btn-sm" onclick="execSheetSync()">🔄 今すぐ同期</button>
+          <button class="btn btn-sm" onclick="previewSheetSync()">👁️ プレビュー（変更確認）</button>
+          <button class="btn btn-sm" onclick="saveSyncSettings()">💾 設定のみ保存</button>
+        </div>
+        <div id="sync-preview" style="margin-top:8px;"></div>
+        <div style="margin-top:10px;font-size:11px;color:var(--text-sub);">
+          💡 スプレッドシートIDの確認: <code>https://docs.google.com/spreadsheets/d/<strong style="color:var(--primary);">ここがID</strong>/edit</code>
+        </div>
       </div>
     </div>
 
