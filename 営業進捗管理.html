@@ -7,6 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
 <style>
 :root{
   --sidebar-w:240px;--sidebar-collapsed-w:60px;--sidebar-bg:#0f1729;
@@ -4179,6 +4180,24 @@ function renderAdmin(){
       </div>
     </div>
 
+    <!-- 生産計画PDF取込 -->
+    <div class="admin-section">
+      <div class="admin-section-head">
+        <h3>📄 生産計画PDF取込</h3>
+      </div>
+      <div class="admin-section-body">
+        <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#92400e;">
+          ℹ️ 「長納期化部品対応用生産計画」PDFをアップロードすると、機種ごとの台数・納品時期・ブランド・枠情報を自動取込み。<br>
+          既存機種は更新、未登録の将来機種は「将来機種計画」に自動追加されます。月次更新にご利用ください。
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
+          <input type="file" id="prodplan-pdf-file" accept=".pdf" onchange="handleProdPlanPDF(event)" style="font-size:12px;">
+          <span style="font-size:11px;color:var(--text-muted);">長納期化部品対応用生産計画_YYMMDD【SUN】.pdf</span>
+        </div>
+        <div id="prodplan-preview" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
     <!-- メール通知設定 -->
     <div class="admin-section">
       <div class="admin-section-head">
@@ -4673,6 +4692,301 @@ function parseSunDenshiRows(rows,sheetName){
   saveToGAS(); renderFuturePage();
   addLog(`サン電子Excel取込: ${found.map(m=>m.code).join(', ')}`);
   showToast(`✅ ${found.length}機種を取込みました（シート: ${sheetName}）`);
+}
+
+/* ============================================================
+   生産計画PDF取込（長納期化部品対応用）
+============================================================ */
+async function handleProdPlanPDF(event){
+  const file=event.target.files[0];
+  if(!file)return;
+  event.target.value='';
+  const prev=document.getElementById('prodplan-preview');
+  if(prev)prev.innerHTML='<div style="padding:12px;color:var(--text-sub);font-size:12px;">📄 PDF解析中...</div>';
+
+  if(typeof pdfjsLib==='undefined'){
+    if(prev)prev.innerHTML='<div style="color:var(--danger);font-size:12px;">⚠️ pdf.jsが読み込まれていません</div>';
+    return;
+  }
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+  try{
+    const buf=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    const page=await pdf.getPage(1);
+    const tc=await page.getTextContent();
+
+    const items=tc.items.map(it=>({
+      text:it.str,
+      x:Math.round(it.transform[4]*10)/10,
+      y:Math.round(it.transform[5]*10)/10,
+      w:it.width||0,
+    })).filter(i=>i.text.trim());
+
+    const parsed=_parseProdPlanItems(items);
+    if(!parsed.length){
+      if(prev)prev.innerHTML='<div style="color:var(--danger);font-size:12px;">⚠️ 生産計画の表構造を検出できませんでした</div>';
+      return;
+    }
+    _showProdPlanPreview(parsed, prev, file.name);
+  }catch(err){
+    if(prev)prev.innerHTML=`<div style="color:var(--danger);font-size:12px;">⚠️ PDF読み取りエラー: ${err.message}</div>`;
+  }
+}
+
+function _parseProdPlanItems(items){
+  const yGroups={};
+  items.forEach(it=>{
+    const yKey=Math.round(it.y/4)*4;
+    if(!yGroups[yKey])yGroups[yKey]=[];
+    yGroups[yKey].push(it);
+  });
+
+  const rows=Object.entries(yGroups)
+    .sort(([a],[b])=>Number(b)-Number(a))
+    .map(([y,its])=>({
+      y:Number(y),
+      items:its.sort((a,b)=>a.x-b.x),
+      text:its.sort((a,b)=>a.x-b.x).map(i=>i.text.trim()).join(' '),
+    }));
+
+  const sections=[];
+  let curSection=null;
+
+  for(let ri=0;ri<rows.length;ri++){
+    const row=rows[ri];
+    const txt=row.text;
+
+    if(/(\d{2})期/.test(txt)){
+      const m=txt.match(/(\d{2})期/);
+      curSection={period:m[1]+'期', year:0, machines:[], rows:[]};
+      sections.push(curSection);
+    }
+
+    if(curSection){
+      // Detect fiscal year from nearby "2026年" etc
+      const ym=txt.match(/(20\d{2})年/);
+      if(ym&&!curSection.year)curSection.year=parseInt(ym[1]);
+      curSection.rows.push(row);
+    }
+  }
+
+  const allMachines=[];
+
+  sections.forEach(sec=>{
+    const baseYear=sec.year||2026;
+    let machineRow=null, dateRow=null, qtyRow=null, salesRow=null, brandRow=null, frameRow=null, honRow=null;
+
+    sec.rows.forEach(row=>{
+      const t=row.text;
+      if(/^機種\s/.test(t)||row.items.some(i=>i.text.trim()==='機種'))machineRow=row;
+      if(t.includes('納品日'))dateRow=row;
+      if(t.includes('調達目標台数'))qtyRow=row;
+      if(t.includes('内：本体')||t.includes('内:本体'))honRow=row;
+      if(t.includes('販売台数'))salesRow=row;
+      if(row.items.some(i=>i.text.trim()==='ブランド'))brandRow=row;
+      if(t.includes('枠／筐体')||t.includes('枠/筐体'))frameRow=row;
+    });
+
+    if(!machineRow)return;
+
+    const mItems=machineRow.items.filter(i=>{
+      const t=i.text.trim();
+      return t&&t!=='機種'&&t.length>=2;
+    });
+
+    const dItems=dateRow?dateRow.items.filter(i=>/^\d+\/[上中下]/.test(i.text.trim())):[];
+
+    mItems.forEach((mi,idx)=>{
+      const rawName=mi.text.trim();
+      const mx=mi.x;
+
+      const _findVal=(row)=>{
+        if(!row)return'';
+        let best=null,bestDist=999;
+        row.items.forEach(it=>{
+          const d=Math.abs(it.x-mx);
+          if(d<bestDist&&it.text.trim()!==''){
+            const t=it.text.trim();
+            if(!/^(調達|販売|内|枠|ブランド|機種|納品|合計)/.test(t)){
+              bestDist=d;best=it.text.trim();
+            }
+          }
+        });
+        return(bestDist<60)?best||'':'';
+      };
+
+      let deliveryTiming='';
+      if(dItems.length){
+        let bestD=null,bestDD=999;
+        dItems.forEach(di=>{
+          const d=Math.abs(di.x-mx);
+          if(d<bestDD){bestDD=d;bestD=di.text.trim();}
+        });
+        if(bestDD<60)deliveryTiming=bestD;
+      }
+
+      let qty=_findVal(qtyRow).replace(/,/g,'');
+      let salesQty=_findVal(salesRow).replace(/,/g,'');
+      const brand=_findVal(brandRow);
+      const frame=_findVal(frameRow);
+
+      const id=_normalizeMachineId(rawName);
+      const type=rawName.startsWith('e:')?'スマートパチンコ':rawName.startsWith('L:')?'スマートパチスロ':rawName.startsWith('P:')?'パチンコP機':'';
+
+      let deliveryDate='';
+      if(deliveryTiming){
+        const dm=deliveryTiming.match(/^(\d{1,2})\/([上中下])/);
+        if(dm){
+          let month=parseInt(dm[1]);
+          let day=dm[2]==='上'?5:dm[2]==='中'?15:25;
+          let year=month>=4?baseYear:baseYear+1;
+          deliveryDate=`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        }
+      }
+
+      if(qty&&/^\d+$/.test(qty))qty=Number(qty).toLocaleString()+'台';
+      if(salesQty&&/^\d+$/.test(salesQty))salesQty=Number(salesQty).toLocaleString()+'台';
+
+      allMachines.push({
+        rawName, id, type, period:sec.period, baseYear,
+        deliveryDate, deliveryTiming,
+        qty:qty||'', salesQty:salesQty||'',
+        brand:brand||'', frame:frame||'',
+      });
+    });
+  });
+
+  return allMachines;
+}
+
+function _normalizeMachineId(raw){
+  let s=raw.replace(/^[eLPp]:/,'').trim();
+  s=s.replace(/ｻﾌﾞ$/,'B').replace(/サブ$/,'B');
+  s=s.replace(/再々再々$/,'').replace(/再×\d+$/,'').replace(/再々$/,'').replace(/再$/,'');
+  return s;
+}
+
+function _showProdPlanPreview(machines, div, fileName){
+  const existing=machines.filter(m=>MACHINES.find(x=>x.id===m.id));
+  const future=machines.filter(m=>!MACHINES.find(x=>x.id===m.id));
+
+  let html=`<div style="font-size:13px;font-weight:700;margin-bottom:10px;">📄 ${fileName} — ${machines.length}機種検出</div>`;
+
+  if(existing.length){
+    html+=`<div style="margin-bottom:6px;"><span style="background:var(--primary);color:#fff;border-radius:4px;font-size:10px;padding:2px 8px;">既存機種 ${existing.length}件</span></div>`;
+    html+=`<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px;">
+      <tr style="background:#eff6ff;"><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">PDF名</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">→ 機種ID</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">期</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">納品時期</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">台数</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">ブランド</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">枠</th></tr>
+      ${existing.map(m=>`<tr>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.rawName}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;font-weight:700;">${m.id}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.period}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.deliveryTiming||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.qty||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.brand||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.frame||'—'}</td>
+      </tr>`).join('')}
+    </table>`;
+  }
+
+  if(future.length){
+    html+=`<div style="margin-bottom:6px;"><span style="background:var(--success);color:#fff;border-radius:4px;font-size:10px;padding:2px 8px;">将来機種 ${future.length}件（新規追加）</span></div>`;
+    html+=`<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px;">
+      <tr style="background:#f0fdf4;"><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">機種名</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">ID</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">種別</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">期</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">納品時期</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">台数</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">枠</th></tr>
+      ${future.map(m=>`<tr>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.rawName}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;font-weight:700;">${m.id}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.type||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.period}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.deliveryTiming||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.qty||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.frame||'—'}</td>
+      </tr>`).join('')}
+    </table>`;
+  }
+
+  html+=`<div style="display:flex;gap:8px;margin-top:10px;">
+    <button class="btn btn-primary btn-sm" onclick="_applyProdPlan()">✅ 取込を実行</button>
+    <button class="btn btn-sm" onclick="document.getElementById('prodplan-preview').innerHTML=''">キャンセル</button>
+  </div>`;
+
+  div.innerHTML=html;
+  window._pendingProdPlan=machines;
+}
+
+function _applyProdPlan(){
+  const machines=window._pendingProdPlan;
+  if(!machines||!machines.length){showToast('⚠️ 取込データがありません');return;}
+
+  let updatedCount=0, addedCount=0, futureCount=0;
+
+  machines.forEach(m=>{
+    const existing=MACHINES.find(x=>x.id===m.id);
+    if(existing){
+      // Update existing machine
+      const changes=[];
+      if(m.qty){
+        const qtyClean=m.qty.replace(/台$/,'');
+        if(qtyClean!==existing.prodQty.replace(/台$/,'')){
+          existing.prodQty=m.qty; changes.push('台数');
+        }
+      }
+      if(m.deliveryDate&&m.deliveryDate!==existing.prodShip){
+        existing.prodShip=m.deliveryDate;
+        if(state.schedules[m.id])state.schedules[m.id].prodShip=m.deliveryDate;
+        changes.push('出荷日');
+      }
+      if(m.brand&&!existing.compliance.includes(m.brand)){
+        const ex=_getExtra(m.id);
+        ex.brand=m.brand; changes.push('ブランド');
+      }
+      if(m.frame){
+        const ex=_getExtra(m.id);
+        ex.frame=m.frame; changes.push('枠');
+      }
+      if(changes.length){
+        addLog(`📄 PDF取込: ${m.id} — ${changes.join(', ')}を更新`);
+        updatedCount++;
+      }
+    }else{
+      // Add as future model if not already exists
+      const eid=state.futureModels.find(f=>f.code===m.id||f.code===m.rawName);
+      if(eid){
+        // Update existing future model
+        if(m.qty)eid.prodQtyActual=m.qty;
+        if(m.deliveryDate)eid.salesDate=m.deliveryDate;
+        if(m.frame)eid.prodMemo=(eid.prodMemo?eid.prodMemo+' / ':'')+'枠:'+m.frame;
+        futureCount++;
+      }else{
+        state.futureModels.push({
+          id:'FM-'+Date.now()+'-'+Math.random().toString(36).substr(2,4),
+          code:m.id,
+          name:m.rawName,
+          salesDate:m.deliveryDate||'',
+          complianceDate:'', complianceStatus:'',
+          code12D:'',
+          productionPlanDate:'', materialDate:'', mountingDate:'',
+          hallDate:'', deliveryDate:m.deliveryDate||'',
+          sampleDeliveryDate:'', sampleBoard:'', sampleBoardType:'',
+          prodFirstImplDate:'', prodFirstAssyDate:'', prodFirstDeliveryDate:'',
+          prodQtyActual:m.qty||'', prodRomType:'', prodMemo:
+            [m.type, m.brand?'ブランド:'+m.brand:'', m.frame?'枠:'+m.frame:'', m.period].filter(Boolean).join(' / '),
+          memo:'生産計画PDF取込 ('+m.period+')',
+        });
+        addedCount++;
+      }
+    }
+  });
+
+  saveToGAS();
+  const msg=`✅ PDF取込完了: 既存更新 ${updatedCount}件、将来機種追加 ${addedCount}件${futureCount?`、将来機種更新 ${futureCount}件`:''}`;
+  showToast(msg);
+  addLog(`📄 生産計画PDF取込: ${machines.length}機種 (更新${updatedCount}/追加${addedCount})`);
+  const div=document.getElementById('prodplan-preview');
+  if(div)div.innerHTML=`<div style="padding:14px;color:var(--success);font-size:13px;font-weight:600;">${msg}</div>`;
+  renderAdmin(); renderDashboard();
+  if(addedCount||futureCount)renderFuturePage();
+  window._pendingProdPlan=null;
 }
 
 /* ============================================================
