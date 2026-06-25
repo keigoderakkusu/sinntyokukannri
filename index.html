@@ -1200,7 +1200,7 @@ function exportCSV(type){
   if(type==='machines'){
     const h=['機種名','担当者','ステータス','量産台数','適合','見本機実装','見本機組立','見本機出荷','量産実装','量産組立','量産出荷','備考'];
     const rows=MACHINES.map(m=>{
-      const sc=state.schedules[m.id];
+      const sc=state.schedules[m.id]||{};
       return[m.id,m.person,state.statuses[m.id],m.prodQty,m.compliance||'',
         sc.sampleImpl||'',sc.sampleAssy||'',sc.sampleShip||'',
         sc.prodImpl||'',sc.prodAssy||'',sc.prodShip||'',
@@ -2634,7 +2634,7 @@ function renderDashboard(){
 
   const nearItems=[];
   MACHINES.forEach(m=>{
-    const sc=schedules[m.id];
+    const sc=schedules[m.id]||{};
     [{key:'sampleShip',label:'見本機出荷'},{key:'prodImpl',label:'量産実装'},
      {key:'prodAssy',label:'量産組立'},{key:'prodShip',label:'量産出荷'}].forEach(f=>{
       if(isNear(sc[f.key]))nearItems.push({id:m.id,label:f.label,diff:getDiff(sc[f.key])});
@@ -2654,7 +2654,7 @@ function renderDashboard(){
   }
 
   const machineRows=MACHINES.map(m=>{
-    const sc=schedules[m.id];const status=state.statuses[m.id];
+    const sc=schedules[m.id]||{};const status=state.statuses[m.id];
     const estCount=getEstimatesForMachine(m.id).length;
     const driveCount=_getDriveFiles(m.id).length;
     return`<tr>
@@ -2695,7 +2695,7 @@ function renderDashboard(){
   let ecoHtml='';
   if(ecoMachines.length>0){
     const ecoRows=ecoMachines.map(m=>{
-      const eco=state.eco[m.id];
+      const eco=state.eco[m.id]||{};
       const total=Object.values(eco).reduce((a,b)=>a+b,0);
       return`<tr><td><strong>${m.id}</strong></td>${ECO_STAGES.map(s=>{
         const v=eco[s.id]||0;return`<td class="center">${v>0?`<strong>${v}</strong>`:'—'}</td>`;
@@ -2770,7 +2770,7 @@ function renderSchedule(){
   const monthHdr=MONTHS.map(m=>`<div style="flex:${m.days};border-right:1px solid var(--border-light);padding:6px 0;text-align:center;font-size:11px;font-weight:600;color:var(--text-sub);">${m.label}</div>`).join('');
 
   const rowsHtml=MACHINES.map(m=>{
-    const sc=state.schedules[m.id];
+    const sc=state.schedules[m.id]||{};
 
     // Build range bars: each bar spans from prevMilestone → thisMilestone
     const bars=[];
