@@ -1,0 +1,16 @@
+**/.git/**
+*.md
+deploy.sh
+営業進捗管理.html
+linkage-helper.gs
+sd_00_pdf_importer.gs
+sd_01_config.gs
+sd_02_engine.gs
+sd_03_webapp.gs
+shintyoku-gas-addon.gs
+vr3-api-extension.gs
+email-rpa-progress.gs
+email-rpa-classifier.gs
+email-rpa-handlers.gs
+email-rpa-main.gs
+business-flow-helper.gs
