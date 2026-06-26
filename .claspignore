@@ -14,3 +14,4 @@ email-rpa-classifier.gs
 email-rpa-handlers.gs
 email-rpa-main.gs
 business-flow-helper.gs
+*.js
