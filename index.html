@@ -6,8 +6,7 @@
 <title>営業進捗管理システム</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
+<!-- xlsx and pdf.js are loaded on demand -->
 <style>
 :root{
   --sidebar-w:240px;--sidebar-collapsed-w:60px;--sidebar-bg:#0f1729;
@@ -1001,10 +1000,29 @@ select:focus{border-color:var(--primary);}
 </div>
 
 <script>
+/* エラー診断: メインスクリプトの前に配置 */
+window._appInitialized = false;
+window.onerror = function(msg, src, line, col, err) {
+  if (window._appInitialized) return false;
+  var html = '<div style="padding:48px;max-width:720px;margin:0 auto;font-family:sans-serif;background:#fff;min-height:100vh;">' +
+    '<h2 style="color:#dc2626;margin-bottom:16px;">&#9888; スクリプトエラー</h2>' +
+    '<p><b>エラー内容:</b> ' + msg + '</p>' +
+    '<p><b>行番号:</b> ' + line + ' / <b>列:</b> ' + col + '</p>' +
+    (err ? '<p><b>詳細:</b> ' + err.message + '</p>' : '') +
+    '<hr style="margin:20px 0;">' +
+    '<p style="color:#666;font-size:13px;">このエラーのスクリーンショットを開発者に共有してください。</p>' +
+    '</div>';
+  document.documentElement.style.background = '#fff';
+  document.body.innerHTML = html;
+  return false;
+};
+</script>
+
+<script>
 /* ============================================================
    DATA
 ============================================================ */
-const TODAY = '2026-05-27';
+const TODAY = new Date().toISOString().split('T')[0];
 const todayD = new Date(TODAY);
 
 const MACHINES = [
@@ -1272,18 +1290,29 @@ function resetData(){
 /* ============================================================
    EXCEL IMPORT
 ============================================================ */
+function _loadXLSX(cb){
+  if(typeof XLSX!=='undefined'){cb();return;}
+  showToast('⏳ XLSXライブラリを読み込み中…');
+  const s=document.createElement('script');
+  s.src='https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js';
+  s.onload=cb;
+  s.onerror=()=>showToast('⚠️ XLSXの読み込みに失敗しました');
+  document.head.appendChild(s);
+}
+
 function handleExcelImport(e){
   const file=e.target.files[0];if(!file)return;
-  if(typeof XLSX==='undefined'){showToast('⚠️ XLSXライブラリが読み込まれていません');return;}
-  const reader=new FileReader();
-  reader.onload=ev=>{
-    try{
-      const wb=XLSX.read(ev.target.result,{type:'binary'});
-      showExcelSheetPicker(wb);
-    }catch(err){showToast('⚠️ Excelファイルの読み込みに失敗しました');}
-  };
-  reader.readAsBinaryString(file);
   e.target.value='';
+  _loadXLSX(function(){
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const wb=XLSX.read(ev.target.result,{type:'binary'});
+        showExcelSheetPicker(wb);
+      }catch(err){showToast('⚠️ Excelファイルの読み込みに失敗しました');}
+    };
+    reader.readAsBinaryString(file);
+  });
 }
 
 function showExcelSheetPicker(wb){
@@ -3935,7 +3964,8 @@ function deleteDdoc(machineId,docId){
 // Excel自動解析
 function handleDdocExcelImport(e){
   const file=e.target.files[0]; if(!file)return;
-  if(typeof XLSX==='undefined'){showToast('⚠️ XLSXライブラリが読み込まれていません');return;}
+  e.target.value='';
+  _loadXLSX(function(){
   const reader=new FileReader();
   reader.onload=ev=>{
     try{
@@ -3947,7 +3977,7 @@ function handleDdocExcelImport(e){
     }catch(err){showToast('⚠️ 読み込みエラー: '+err.message);}
   };
   reader.readAsBinaryString(file);
-  e.target.value='';
+  }); // _loadXLSX
 }
 
 function _parseDdocRows(rows, sheetName){
@@ -4612,21 +4642,22 @@ function saveFutureModal(){
 // サン電子 生産計画Excel インポート
 function handleSunDenshiImport(e){
   const file=e.target.files[0]; if(!file)return;
-  if(typeof XLSX==='undefined'){showToast('⚠️ XLSXライブラリが読み込まれていません');return;}
-  const reader=new FileReader();
-  reader.onload=ev=>{
-    try{
-      const wb=XLSX.read(ev.target.result,{type:'binary',cellDates:true});
-      // 最新シートを選ぶ（日付っぽい名前 YYMMDD を降順）
-      const dated=wb.SheetNames.filter(s=>/^\d{6}$/.test(s)).sort((a,b)=>b.localeCompare(a));
-      const sheetName=dated[0]||wb.SheetNames[0];
-      const ws=wb.Sheets[sheetName];
-      const raw=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:false});
-      parseSunDenshiRows(raw,sheetName);
-    }catch(err){showToast('⚠️ 読み込みエラー: '+err.message);}
-  };
-  reader.readAsBinaryString(file);
   e.target.value='';
+  _loadXLSX(function(){
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const wb=XLSX.read(ev.target.result,{type:'binary',cellDates:true});
+        // 最新シートを選ぶ（日付っぽい名前 YYMMDD を降順）
+        const dated=wb.SheetNames.filter(s=>/^\d{6}$/.test(s)).sort((a,b)=>b.localeCompare(a));
+        const sheetName=dated[0]||wb.SheetNames[0];
+        const ws=wb.Sheets[sheetName];
+        const raw=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:false});
+        parseSunDenshiRows(raw,sheetName);
+      }catch(err){showToast('⚠️ 読み込みエラー: '+err.message);}
+    };
+    reader.readAsBinaryString(file);
+  });
 }
 
 function _excelDateStr(v){
@@ -4705,8 +4736,17 @@ async function handleProdPlanPDF(event){
   if(prev)prev.innerHTML='<div style="padding:12px;color:var(--text-sub);font-size:12px;">📄 PDF解析中...</div>';
 
   if(typeof pdfjsLib==='undefined'){
-    if(prev)prev.innerHTML='<div style="color:var(--danger);font-size:12px;">⚠️ pdf.jsが読み込まれていません</div>';
-    return;
+    try{
+      await new Promise((resolve,reject)=>{
+        const s=document.createElement('script');
+        s.src='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+        s.onload=resolve; s.onerror=reject;
+        document.head.appendChild(s);
+      });
+    }catch(e){
+      if(prev)prev.innerHTML='<div style="color:var(--danger);font-size:12px;">⚠️ pdf.jsの読み込みに失敗しました</div>';
+      return;
+    }
   }
   pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
 
