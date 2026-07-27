@@ -5411,104 +5411,156 @@ function removeBomRow(model,rowId){
   renderParts();
 }
 
-function _partsStockCard(model){
-  if(!model)return'';
+function _esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function _hit(text,term){return term&&String(text||'').toLowerCase().includes(term);}
+
+const STOCK_DEFS=[
+  {key:'new',   num:'(1)',label:'新品在庫',      color:'#eff6ff'},
+  {key:'reuse', num:'(2)',label:'リユース在庫（中古だが新品利用扱い）',color:'var(--primary-light)'},
+  {key:'eco',   num:'(3)',label:'エコ在庫（中古品）',color:'#fffbeb'},
+];
+
+function _bomLeafHtml(model,term){
   const ps=_getPartsStock(model);
   const bomTotal=ps.bom.reduce((s,r)=>s+(r.qty*r.unitPrice),0);
   const bomRows=ps.bom.map(r=>`
     <tr>
-      <td><input value="${r.partNo}" onchange="updateBomRow('${model}','${r.id}','partNo',this.value)" style="width:100px;font-size:11px;padding:2px 4px;"></td>
-      <td><input value="${r.name}" onchange="updateBomRow('${model}','${r.id}','name',this.value)" style="width:140px;font-size:11px;padding:2px 4px;"></td>
+      <td><input value="${_esc(r.partNo)}" onchange="updateBomRow('${model}','${r.id}','partNo',this.value)" style="width:100px;font-size:11px;padding:2px 4px;${_hit(r.partNo,term)?'background:#fef9c3;':''}"></td>
+      <td><input value="${_esc(r.name)}" onchange="updateBomRow('${model}','${r.id}','name',this.value)" style="width:140px;font-size:11px;padding:2px 4px;${_hit(r.name,term)?'background:#fef9c3;':''}"></td>
       <td><input type="number" value="${r.qty}" onchange="updateBomRow('${model}','${r.id}','qty',this.value)" style="width:60px;font-size:11px;padding:2px 4px;text-align:right;"></td>
       <td><input type="number" value="${r.unitPrice}" onchange="updateBomRow('${model}','${r.id}','unitPrice',this.value)" style="width:80px;font-size:11px;padding:2px 4px;text-align:right;">円</td>
       <td style="font-size:11px;text-align:right;">¥${(r.qty*r.unitPrice).toLocaleString('ja-JP')}</td>
       <td><button class="btn btn-sm" style="padding:1px 6px;color:var(--danger);" onclick="removeBomRow('${model}','${r.id}')">✕</button></td>
     </tr>`).join('');
-
-  const stockCard=(label,key,color)=>`
-    <div style="flex:1;min-width:120px;background:${color};border-radius:var(--radius-sm);padding:10px;text-align:center;">
-      <div style="font-size:11px;font-weight:700;">${label}</div>
-      <input type="number" value="${ps.stock[key]}" onchange="updatePartsStockField('${model}','stock','${key}',this.value)"
-        style="width:70px;font-size:18px;font-weight:700;text-align:center;margin:4px 0;border:1px solid var(--border);border-radius:4px;">
-      <div style="font-size:10px;color:var(--text-muted);">個</div>
-      <div style="font-size:10px;margin-top:4px;">単価
-        <input type="number" value="${ps.price[key]}" onchange="updatePartsStockField('${model}','price','${key}',this.value)"
-          style="width:60px;font-size:11px;text-align:right;border:1px solid var(--border);border-radius:4px;">円
-      </div>
-    </div>`;
-
   return`
-    <div class="table-wrap" style="margin-top:12px;">
-      <div class="table-toolbar"><h2>🧩 品番: ${model} — 部品在庫・価格管理</h2></div>
-      <div style="padding:14px;display:flex;gap:10px;flex-wrap:wrap;">
-        ${stockCard('① 新品在庫','new','#eff6ff')}
-        ${stockCard('② リユース在庫','reuse','var(--primary-light)')}
-        ${stockCard('③ エコ在庫','eco','#fffbeb')}
+    <button class="btn btn-sm" onclick="addBomRow('${model}')">＋ 部品行追加</button>
+    ${ps.bom.length?`<table style="font-size:11px;margin-top:8px;"><thead><tr><th>品番</th><th>部品名</th><th>数量</th><th>単価</th><th>金額</th><th></th></tr></thead><tbody>${bomRows}</tbody></table>
+      <div style="text-align:right;font-size:12px;font-weight:700;margin-top:6px;">BOM合計: ¥${bomTotal.toLocaleString('ja-JP')}</div>`
+      :`<div style="color:var(--text-muted);font-size:11px;margin-top:8px;">部品行がありません。</div>`}`;
+}
+
+function _stockLeafHtml(model,key,term){
+  const ps=_getPartsStock(model);
+  return`
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+      <div>
+        <div style="font-size:10px;color:var(--text-muted);">在庫数</div>
+        <input type="number" value="${ps.stock[key]}" onchange="updatePartsStockField('${model}','stock','${key}',this.value)"
+          style="width:90px;font-size:18px;font-weight:700;text-align:center;border:1px solid var(--border);border-radius:4px;padding:4px;">
+        <span style="font-size:11px;color:var(--text-muted);">個</span>
       </div>
-      <div style="padding:0 14px 14px;">
-        <div style="font-size:12px;font-weight:700;margin-bottom:6px;">総合部品表（BOM）<button class="btn btn-sm" style="margin-left:8px;" onclick="addBomRow('${model}')">＋ 行追加</button></div>
-        ${ps.bom.length?`<table style="font-size:11px;"><thead><tr><th>品番</th><th>部品名</th><th>数量</th><th>単価</th><th>金額</th><th></th></tr></thead><tbody>${bomRows}</tbody></table>
-        <div style="text-align:right;font-size:12px;font-weight:700;margin-top:6px;">BOM合計: ¥${bomTotal.toLocaleString('ja-JP')}</div>`
-        :`<div style="color:var(--text-muted);font-size:11px;">部品行がありません。「＋ 行追加」で登録してください。</div>`}
+      <div>
+        <div style="font-size:10px;color:var(--text-muted);">単価</div>
+        <input type="number" value="${ps.price[key]}" onchange="updatePartsStockField('${model}','price','${key}',this.value)"
+          style="width:90px;font-size:14px;text-align:right;border:1px solid var(--border);border-radius:4px;padding:4px;">
+        <span style="font-size:11px;color:var(--text-muted);">円</span>
       </div>
+      <div style="font-size:11px;color:var(--text-sub);">評価額: ¥${(ps.stock[key]*ps.price[key]).toLocaleString('ja-JP')}</div>
     </div>`;
 }
 
-function renderParts(){
-  const machine=state.selectedMachine||MACHINES[0]?.id;
-  if(!machine){document.getElementById('page-parts').innerHTML='<div style="padding:24px;color:var(--text-muted);">機種が登録されていません。</div>';return;}
-  const doc=_getBoardDoc(machine);
-  const machineSelHtml=MACHINES.map(m=>`<option value="${m.id}"${m.id===machine?' selected':''}>${m.id}</option>`).join('');
-
-  const boardCards=BOARD_TYPE_DEFS.map(bt=>{
-    const b=doc[bt.key];
-    return`
-    <div class="table-wrap">
-      <div class="table-toolbar"><h2>${bt.key}_${bt.label}</h2></div>
-      <div style="padding:14px;">
-        <div style="margin-bottom:8px;">
-          <label style="font-size:11px;font-weight:600;color:var(--text-sub);display:block;margin-bottom:3px;">${bt.key}-2 基板品番（仕掛基板／PCB）</label>
-          <input value="${b.model}" placeholder="例: M2401A" onchange="updateBoardDoc('${machine}','${bt.key}','model',this.value)" style="width:100%;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
-        </div>
-        <div style="margin-bottom:8px;">
-          <label style="font-size:11px;font-weight:600;color:var(--text-sub);display:block;margin-bottom:3px;">${bt.key}-1 基板仕様書 URL</label>
-          <div style="display:flex;gap:6px;">
-            <input value="${b.specUrl}" placeholder="Google Drive / SharePoint URL" onchange="updateBoardDoc('${machine}','${bt.key}','specUrl',this.value)" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
-            ${b.specUrl?`<a class="btn btn-sm" href="${b.specUrl}" target="_blank">開く</a>`:''}
-          </div>
-        </div>
-        <div style="margin-bottom:4px;">
-          <label style="font-size:11px;font-weight:600;color:var(--text-sub);display:block;margin-bottom:3px;">${bt.key}-2 仕掛基板（PCB見積書）URL</label>
-          <div style="display:flex;gap:6px;">
-            <input value="${b.pcbUrl}" placeholder="Google Drive / SharePoint URL" onchange="updateBoardDoc('${machine}','${bt.key}','pcbUrl',this.value)" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
-            ${b.pcbUrl?`<a class="btn btn-sm" href="${b.pcbUrl}" target="_blank">開く</a>`:''}
-          </div>
-        </div>
-      </div>
+function _urlLeafHtml(machine,key,field,label,value,term){
+  const hit=_hit(value,term);
+  return`
+    <div style="display:flex;gap:6px;align-items:center;">
+      <input value="${_esc(value)}" placeholder="Google Drive / SharePoint URL" onchange="updateBoardDoc('${machine}',${key?`'${key}'`:'null'},'${field}',this.value)"
+        style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;${hit?'background:#fef9c3;':''}">
+      ${value?`<a class="btn btn-sm" href="${_esc(value)}" target="_blank">開く</a>`:''}
     </div>`;
+}
+
+function _treeLeaf(id,summary,bodyHtml,open){
+  return`<details${open?' open':''} style="margin:4px 0 4px 14px;">
+    <summary style="cursor:pointer;font-size:12px;font-weight:600;padding:4px 0;">${summary}</summary>
+    <div style="padding:8px 0 8px 16px;border-left:2px solid var(--border);margin-left:4px;">${bodyHtml}</div>
+  </details>`;
+}
+function _treeBranch(summary,innerHtml,open){
+  return`<details${open?' open':''} style="margin:4px 0 4px 14px;">
+    <summary style="cursor:pointer;font-size:12.5px;font-weight:700;padding:4px 0;">${summary}</summary>
+    <div style="padding:2px 0 2px 10px;border-left:2px solid var(--border);margin-left:4px;">${innerHtml}</div>
+  </details>`;
+}
+
+function _boardTypeTree(machine,bt,term){
+  const doc=_getBoardDoc(machine);
+  const b=doc[bt.key];
+  const model=b.model;
+  const modelHit=_hit(model,term);
+  const stockLeaves=STOCK_DEFS.map(sd=>
+    _treeLeaf(`${bt.key}-3-2-${sd.key}`,`${sd.num} ${sd.label}`,
+      model?_stockLeafHtml(model,sd.key,term):`<div style="color:var(--text-muted);font-size:11px;">品番未設定のため在庫管理できません（${bt.key}-2で品番を入力してください）</div>`,
+      false)
+  ).join('');
+
+  const usedPartsBranch=_treeBranch(`${bt.key}-3_使用部品${model?` <span style="font-weight:400;color:var(--text-sub);">（品番: <span style="${modelHit?'background:#fef9c3;':''}">${_esc(model)}</span>）</span>`:''}`,
+    _treeLeaf(`${bt.key}-3-1`,`${bt.key}-3-1_総合部品表（BOM）`,
+      model?_bomLeafHtml(model,term):`<div style="color:var(--text-muted);font-size:11px;">品番未設定のためBOM管理できません</div>`,false)
+    +_treeBranch(`${bt.key}-3-2_部品在庫・価格管理`,stockLeaves,false)
+  ,false);
+
+  const inner=
+    _treeLeaf(`${bt.key}-1`,`${bt.key}-1_基板仕様書`,_urlLeafHtml(machine,bt.key,'specUrl','基板仕様書',b.specUrl,term),false)
+    +_treeLeaf(`${bt.key}-2`,`${bt.key}-2_仕掛基板（PCB見積書含む）`,
+        `<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text-sub);display:block;margin-bottom:3px;">基板品番</label>
+         <input value="${_esc(model)}" placeholder="例: M2401A" onchange="updateBoardDoc('${machine}','${bt.key}','model',this.value)" style="width:220px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;${modelHit?'background:#fef9c3;':''}"></div>
+         <label style="font-size:11px;color:var(--text-sub);display:block;margin-bottom:3px;">PCB見積書 URL</label>
+         ${_urlLeafHtml(machine,bt.key,'pcbUrl','PCB見積書',b.pcbUrl,term)}`,false)
+    +usedPartsBranch;
+
+  return _treeBranch(`${bt.key}_${bt.label}`,inner,false);
+}
+
+function _machineMatches(machine,term){
+  if(!term)return true;
+  if(_hit(machine,term))return true;
+  const doc=_getBoardDoc(machine);
+  if(_hit(doc.assemblyQuoteUrl,term))return true;
+  return BOARD_TYPE_DEFS.some(bt=>{
+    const b=doc[bt.key];
+    if(_hit(b.model,term)||_hit(b.specUrl,term)||_hit(b.pcbUrl,term))return true;
+    if(!b.model)return false;
+    const ps=state.partsStock[b.model];
+    if(!ps)return false;
+    return ps.bom.some(r=>_hit(r.partNo,term)||_hit(r.name,term));
+  });
+}
+
+function renderParts(){
+  const searchEl=document.getElementById('parts-search');
+  const term=(searchEl?searchEl.value:'').trim().toLowerCase();
+  const cursorPos=searchEl?searchEl.selectionStart:null;
+  const hadFocus=document.activeElement===searchEl;
+
+  const machines=MACHINES.filter(m=>_machineMatches(m.id,term));
+
+  const treeHtml=machines.map(m=>{
+    const doc=_getBoardDoc(m.id);
+    const openMachine=!!term; // 検索中は一致した機種を展開
+    const inner=
+      _treeLeaf('01',`01_組立費見積書`,_urlLeafHtml(m.id,null,'assemblyQuoteUrl','組立費見積書',doc.assemblyQuoteUrl,term),false)
+      +_treeBranch(`02_各基板構成`,BOARD_TYPE_DEFS.map(bt=>_boardTypeTree(m.id,bt,term)).join(''),!!term);
+    return _treeBranch(`🎮 機種 ${_esc(m.id)}`,inner,openMachine);
   }).join('');
 
-  const models=[...new Set(BOARD_TYPE_DEFS.map(bt=>doc[bt.key].model).filter(Boolean))];
-  const stockCards=models.map(_partsStockCard).join('');
-
   document.getElementById('page-parts').innerHTML=`
-    <div class="page-heading"><div><h2>🧩 部品管理</h2><p>機種 → 基板構成（A主基板/B液晶制御基板/C液晶演出基板）→ 仕様書・PCB見積・品番単位の部品在庫（新品/リユース/エコ）とBOM</p></div></div>
+    <div class="page-heading"><div><h2>🧩 部品管理</h2><p>機種 → 01_組立費見積書 / 02_各基板構成（A主基板・B液晶制御基板・C液晶演出基板）→ 仕様書・PCB見積・BOM・部品在庫（新品/リユース/エコ）</p></div></div>
     <div class="filter-bar">
-      <span style="font-size:12px;font-weight:600;">対象機種:</span>
-      <select onchange="state.selectedMachine=this.value;renderPage('parts');">${machineSelHtml}</select>
+      <input id="parts-search" type="text" placeholder="🔍 機種・品番・部品名・URLで検索" value="${_esc(term)}" oninput="renderParts()"
+        style="flex:1;min-width:240px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;">
+      ${term?`<span style="font-size:12px;color:var(--text-sub);">${machines.length}件 一致</span>`:''}
     </div>
-    <div class="table-wrap" style="margin-bottom:16px;">
-      <div class="table-toolbar"><h2>01_組立費見積書</h2></div>
-      <div style="padding:14px;display:flex;gap:6px;">
-        <input value="${doc.assemblyQuoteUrl}" placeholder="Google Drive / SharePoint URL" onchange="updateBoardDoc('${machine}',null,'assemblyQuoteUrl',this.value)" style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
-        ${doc.assemblyQuoteUrl?`<a class="btn btn-sm" href="${doc.assemblyQuoteUrl}" target="_blank">開く</a>`:''}
+    <div class="table-wrap">
+      <div style="padding:14px;">
+        ${treeHtml||`<div style="color:var(--text-muted);font-size:13px;padding:20px;text-align:center;">一致する機種がありません。</div>`}
       </div>
-    </div>
-    <div style="font-size:13px;font-weight:700;margin:4px 0 8px;">02_各基板構成</div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px;">${boardCards}</div>
-    ${models.length?`<div style="font-size:13px;font-weight:700;margin:20px 0 4px;">A-3/B-3/C-3_使用部品（品番単位・全機種共有）</div>${stockCards}`
-      :`<div class="alert-bar alert-bar-info" style="margin-top:16px;">ℹ️ 上の各基板の「基板品番」を入力すると、品番単位の部品在庫・BOM管理欄が表示されます。</div>`}
-  `;
+    </div>`;
+
+  const newSearchEl=document.getElementById('parts-search');
+  if(newSearchEl&&hadFocus){
+    newSearchEl.focus();
+    if(cursorPos!=null)newSearchEl.setSelectionRange(cursorPos,cursorPos);
+  }
 }
 
 function renderPage(page){
