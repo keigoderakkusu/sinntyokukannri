@@ -260,7 +260,7 @@ function syncMachinesFromSheet(spreadsheetId, sheetName) {
       id:           ['機種名','機種ID','機種コード','型式','モデル','id','machineId'],
       person:       ['担当者','担当','営業担当','person'],
       compliance:   ['適合','適合状況','型式適合','compliance'],
-      prodQty:      ['量産台数','台数','生産台数','数量','prodQty','qty'],
+      prodQty:      ['量産台数','台数','生産台数','数量','受注台数','受注数量','販売台数','販売数量','メーカー販売数','prodQty','qty'],
       rom:          ['ROM','ロム','rom','ROM種類'],
       status:       ['ステータス','状態','進捗','status'],
       sampleImpl:   ['見本機実装','見本実装','サンプル実装','sampleImpl'],
@@ -329,6 +329,92 @@ function syncMachinesFromSheet(spreadsheetId, sheetName) {
     return JSON.stringify({ __error: true, message: e.message,
       hint: 'スプレッドシートIDを確認するか、このGASアカウントにシートの閲覧権限があるか確認してください。' });
   }
+}
+
+/* ============================================================
+   受注状況シート → 販売台数の自動反映（トリガーで定期実行）
+   毎回ブラウザを開かなくても、指定シートの最新の販売台数を
+   保存データ（machineFields.prodQty）に直接書き込む。
+============================================================ */
+
+/**
+ * [管理コンソールから呼び出し] 自動反映を有効化してトリガーを設定
+ * @param {string} spreadsheetId - 受注状況シートのスプレッドシートID
+ * @param {string} sheetName - シート名（例: 受注状況）
+ * @param {number} intervalHours - 何時間ごとに反映するか（デフォルト1時間）
+ */
+function setupOrderSyncTrigger(spreadsheetId, sheetName, intervalHours) {
+  if (!spreadsheetId) return JSON.stringify({ success: false, error: 'スプレッドシートIDが未指定です' });
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'autoSyncOrderStatus') ScriptApp.deleteTrigger(t);
+  });
+  var props = PropertiesService.getScriptProperties();
+  props.setProperty('orderSync_spreadsheetId', spreadsheetId.trim());
+  props.setProperty('orderSync_sheetName', (sheetName || '').trim());
+  var hours = parseInt(intervalHours, 10) || 1;
+  ScriptApp.newTrigger('autoSyncOrderStatus').timeBased().everyHours(hours).create();
+  // 設定直後に一度実行して即時反映
+  try { autoSyncOrderStatus(); } catch (e) { Logger.log('初回同期エラー: ' + e.message); }
+  Logger.log('✅ 受注状況シート自動反映トリガーを設定しました（' + hours + '時間ごと）');
+  return JSON.stringify({ success: true, hours: hours });
+}
+
+/** 自動反映を停止 */
+function removeOrderSyncTrigger() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'autoSyncOrderStatus') ScriptApp.deleteTrigger(t);
+  });
+  return JSON.stringify({ success: true });
+}
+
+/** 現在の自動反映設定を確認 */
+function getOrderSyncStatus() {
+  var props = PropertiesService.getScriptProperties();
+  var active = ScriptApp.getProjectTriggers().some(function(t) {
+    return t.getHandlerFunction() === 'autoSyncOrderStatus';
+  });
+  return JSON.stringify({
+    active: active,
+    spreadsheetId: props.getProperty('orderSync_spreadsheetId') || '',
+    sheetName: props.getProperty('orderSync_sheetName') || '',
+  });
+}
+
+/**
+ * [トリガーから定期実行 / 手動実行可] 受注状況シートの最新台数を
+ * 保存済みstate（machineFields.prodQty）へ反映する。
+ * ウェブアプリを開いていなくても、次に開いたときに最新値が表示される。
+ */
+function autoSyncOrderStatus() {
+  var props = PropertiesService.getScriptProperties();
+  var spreadsheetId = props.getProperty('orderSync_spreadsheetId');
+  var sheetName = props.getProperty('orderSync_sheetName');
+  if (!spreadsheetId) { Logger.log('受注状況シート未設定 — setupOrderSyncTrigger() で設定してください'); return; }
+
+  var res = syncMachinesFromSheet(spreadsheetId, sheetName);
+  var parsed;
+  try { parsed = JSON.parse(res); } catch (e) { Logger.log('受注状況シート解析エラー: ' + e.message); return; }
+  if (parsed.__error) { Logger.log('受注状況シート同期エラー: ' + parsed.message); return; }
+
+  var stateJson = loadData();
+  var state = stateJson ? JSON.parse(stateJson) : {};
+  state.machineFields = state.machineFields || {};
+  state.config = state.config || {};
+
+  var updated = 0;
+  (parsed.machines || []).forEach(function(sm) {
+    if (!sm.id || !sm.prodQty) return;
+    var f = state.machineFields[sm.id] || {};
+    if (f.prodQty !== sm.prodQty) updated++;
+    f.prodQty = sm.prodQty;
+    state.machineFields[sm.id] = f;
+  });
+
+  state.config.lastOrderSyncAt = Utilities.formatDate(new Date(), Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm');
+  state.config.lastOrderSyncCount = updated;
+  state.config.lastOrderSyncSheet = parsed.sheetName || sheetName || '';
+  saveData(JSON.stringify(state));
+  Logger.log('✅ 受注状況シート自動反映: ' + updated + '件更新（' + (parsed.sheetName || sheetName) + '）');
 }
 
 function _fmtCellDate(v) {
