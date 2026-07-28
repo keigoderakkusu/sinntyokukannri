@@ -375,7 +375,7 @@ select:focus{border-color:var(--primary);}
       </div>
       <div class="topbar-spacer"></div>
       <div class="topbar-actions">
-        <button class="btn btn-sm" onclick="document.getElementById('excel-file-topbar').click()">📥 Excel取込</button>
+        <button class="btn btn-sm" onclick="document.getElementById('excel-file-topbar').click()">📥 サン電子生産計画表 取込</button>
         <input type="file" id="excel-file-topbar" accept=".xlsx,.xls" style="display:none" onchange="handleExcelImport(event)">
         <div class="export-wrap">
           <button class="btn btn-sm" onclick="toggleExportMenu(event)">📤 出力 ▾</button>
@@ -1328,6 +1328,19 @@ function handleExcelImport(e){
     reader.onload=ev=>{
       try{
         const wb=XLSX.read(ev.target.result,{type:'binary'});
+        // サン電子生産計画表（YYMMDD形式のシートが複数ある転置レイアウト）は
+        // 専用パーサーへ自動振り分け。通常の「1行=1機種」形式のみ従来の取込を使う。
+        if(wb.SheetNames.some(s=>/^\d{6}$/.test(s))){
+          showToast('📊 サン電子生産計画表として取込みます');
+          const wb2=XLSX.read(ev.target.result,{type:'binary',cellDates:true});
+          const dated=wb2.SheetNames.filter(s=>/^\d{6}$/.test(s)).sort((a,b)=>b.localeCompare(a));
+          const sheetName=dated[0]||wb2.SheetNames[0];
+          const ws=wb2.Sheets[sheetName];
+          const raw=XLSX.utils.sheet_to_json(ws,{header:1,defval:null,raw:false});
+          showPage('future');
+          parseSunDenshiRows(raw,sheetName);
+          return;
+        }
         showExcelSheetPicker(wb);
       }catch(err){showToast('⚠️ Excelファイルの読み込みに失敗しました');}
     };
@@ -4374,11 +4387,11 @@ function renderAdmin(){
 
     <!-- Excel取込 -->
     <div class="admin-section">
-      <div class="admin-section-head"><h3>📥 エクセル取込</h3></div>
+      <div class="admin-section-head"><h3>📥 サン電子生産計画表 取込</h3></div>
       <div class="admin-section-body">
         <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;">
           <input type="file" id="excel-file-admin" accept=".xlsx,.xls" onchange="handleExcelImport(event)" style="font-size:12px;">
-          <span style="font-size:11px;color:var(--text-muted);">営業情報.xlsx を選択 → 機種データを自動検出して反映</span>
+          <span style="font-size:11px;color:var(--text-muted);">サン電子生産計画表（xlsx）を選択 → 機種データを自動検出して反映（それ以外の1行=1機種形式のExcelにも対応）</span>
         </div>
         <div id="excel-preview" style="margin-top:12px;"></div>
       </div>
@@ -4706,7 +4719,7 @@ function renderFuturePage(){
       <div style="display:flex;gap:8px;align-items:center;">
         ${impBadge}
         <label class="btn btn-sm" style="cursor:pointer;">
-          📥 生産計画Excel取込（月次更新）
+          📥 サン電子生産計画表 取込（月次更新）
           <input type="file" accept=".xlsx,.xls" style="display:none" onchange="handleSunDenshiImport(event)">
         </label>
         <button class="btn btn-primary btn-sm" onclick="openFutureAddModal()">＋ 機種追加</button>
@@ -5624,6 +5637,7 @@ function _init(saved){
   updateFutureBadge();
   applyTabSettings();
   renderDashboard();
+  window._appInitialized=true; // 初期化完了後は、以降の実行時エラーで画面全体を潰さないようにする
 }
 
 if(typeof google!=='undefined'&&google.script){
