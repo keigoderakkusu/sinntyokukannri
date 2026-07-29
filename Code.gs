@@ -178,15 +178,16 @@ function getLinkageDataFromSheet(spreadsheetId, sheetName) {
     // 列インデックスを探す（linkage-helper.gs と同じロジック）
     var COL_CANDIDATES = {
       machineId: ['機種名','機種コード','モデル','id','machineId'],
-      customer:  ['顧客名','得意先','お客様','client','customer'],
+      customer:  ['顧客名','得意先','お客様','宛先（企業名）','宛先','client','customer'],
       amount:    ['見積金額','金額','受注金額','amount'],
       status:    ['ステータス','状態','status'],
-      quoteDate: ['見積提出日','見積日','提出日','quoteDate'],
+      quoteDate: ['見積提出日','見積日','提出日','発行日','quoteDate'],
       poDate:    ['注文書受領日','注文書日','受領日','poDate','orderDate'],
-      url:       ['見積書URL','見積リンク','見積PDF','URL','リンク','url','link'],
+      // 「見積台帳」シートは見積書PDFのリンクを「保存先URL」列に持つ
+      url:       ['見積書URL','見積リンク','見積PDF','保存先URL','URL','リンク','url','link'],
       orderUrl:  ['注文書URL','注文書リンク','注文書PDF','orderUrl','orderLink','po_url'],
       orderNo:   ['注文番号','注文書番号','PO番号','orderNo'],
-      quoteNo:   ['見積番号','見積No','quoteNo'],
+      quoteNo:   ['見積番号','見積No.','見積No','quoteNo'],
       memo:      ['備考','メモ','note','memo'],
     };
     var colIdx = {};

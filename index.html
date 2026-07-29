@@ -353,7 +353,8 @@ select:focus{border-color:var(--primary);}
       <div class="nav-item" data-page="schedule"><span class="nav-item-icon">📅</span><span class="nav-item-label">スケジュール</span></div>
       <div class="nav-item" data-page="eco"><span class="nav-item-icon">♻️</span><span class="nav-item-label">エコフロー</span><span class="nav-badge-wrap"><span class="nav-badge" id="eco-badge">0</span></span></div>
       <div class="nav-item" data-page="flow"><span class="nav-item-icon">🔄</span><span class="nav-item-label">業務フロー</span></div>
-      <div class="nav-item" data-page="parts"><span class="nav-item-icon">🧩</span><span class="nav-item-label">部品管理</span></div>
+      <div class="nav-item" data-page="parts"><span class="nav-item-icon">🧩</span><span class="nav-item-label">機種管理</span></div>
+      <div class="nav-item" data-page="boards"><span class="nav-item-icon">🔧</span><span class="nav-item-label">基板管理</span></div>
       <div class="nav-item" data-page="future"><span class="nav-item-icon">🔭</span><span class="nav-item-label">将来機種計画</span><span class="nav-badge-wrap"><span class="nav-badge" id="future-badge" style="background:var(--info);">0</span></span></div>
       <div class="sidebar-section-label">管理</div>
       <div class="nav-item" data-page="admin"><span class="nav-item-icon">⚙️</span><span class="nav-item-label">管理コンソール</span></div>
@@ -396,6 +397,7 @@ select:focus{border-color:var(--primary);}
       <div id="page-log" class="page"></div>
       <div id="page-future" class="page"></div>
       <div id="page-parts" class="page"></div>
+      <div id="page-boards" class="page"></div>
     </div>
   </div>
 </div>
@@ -893,6 +895,24 @@ select:focus{border-color:var(--primary);}
   </div>
 </div>
 
+<!-- 図鑑 詳細ビュー モーダル（機種管理・基板管理 共通） -->
+<div class="modal-overlay" id="detail-modal" onclick="if(event.target===this)closeDetailModal()">
+  <div class="modal" style="max-width:760px;width:92vw;">
+    <div class="modal-head">
+      <h3 id="detail-modal-title">詳細</h3>
+      <button class="modal-close" onclick="closeDetailModal()">✕</button>
+    </div>
+    <div class="modal-body" id="detail-modal-body" style="max-height:72vh;overflow:auto;"></div>
+    <div class="modal-footer" style="justify-content:space-between;">
+      <div>
+        <button class="btn btn-sm" onclick="detailNav(-1)">◀ 前へ</button>
+        <button class="btn btn-sm" onclick="detailNav(1)">次へ ▶</button>
+      </div>
+      <span id="detail-modal-position" style="font-size:11px;color:var(--text-sub);"></span>
+    </div>
+  </div>
+</div>
+
 <!-- Eco modal -->
 <div class="modal-overlay" id="eco-modal">
   <div class="modal" style="max-width:400px;">
@@ -1106,6 +1126,10 @@ const state = {
   futureModels:[], // 将来機種計画 [{id,code,name,salesDate,complianceDate,productionPlanDate,materialDate,mountingDate,deliveryDate,hallDate,memo}]
   boardDocs:{},    // { machineId: {assemblyQuoteUrl, A:{model,specUrl,pcbUrl}, B:{...}, C:{...}} } — 機種×基板構成のドキュメント
   partsStock:{},   // { 基板品番: {bom:[{id,partNo,name,qty,unitPrice}], stock:{new,reuse,eco}, price:{new,reuse,eco}} } — 品番単位で全機種共有
+  hardwareSpecs:{},// { 機種コード: {series,title,person,mainBoard,cpu,lcdBoard,vdp,cgRom,effectIfBoard,lcdIfBoard,rtc,sram,lcdSize,mainLcd,updateDate,subFixDate,applyDate,category,source} } — ハードウェア構成一覧表取込
+  machinePhotos:{},// { machineId: {fileId,url,fileName,uploadedAt} } — 図鑑ビュー用の代表写真（機種）
+  boardPhotos:{},  // { 基板品番: {fileId,url,fileName,uploadedAt} } — 図鑑ビュー用の代表写真（基板）
+  boardDriveFiles:{}, // { 基板品番: [{fileId,fileName,url,uploadedAt}] } — 基板に添付したPDF/Excel等
 };
 
 const BOARD_TYPE_DEFS=[
@@ -1113,6 +1137,15 @@ const BOARD_TYPE_DEFS=[
   {key:'B',label:'液晶制御基板'},
   {key:'C',label:'液晶演出基板'},
 ];
+
+const BOARD_CATEGORY_DEFS=[
+  {key:'M', label:'主制御基板'},
+  {key:'D', label:'液晶制御基板'},
+  {key:'DE',label:'液晶IF基板'},
+  {key:'E', label:'演出基板'},
+  {key:'C', label:'サブ制御基板'},
+];
+const MACHINE_TYPE_OPTIONS=['','パチンコ','スロット','パチンコ/スロット'];
 
 /* ============================================================
    UTILITIES
@@ -1183,6 +1216,10 @@ function saveToGAS(alertDesc){
       futureModels:state.futureModels,
       boardDocs:state.boardDocs,
       partsStock:state.partsStock,
+      hardwareSpecs:state.hardwareSpecs,
+      machinePhotos:state.machinePhotos,
+      boardPhotos:state.boardPhotos,
+      boardDriveFiles:state.boardDriveFiles,
     });
     google.script.run.saveData(json);
     if(alertDesc && state.config.notifyEmail){
@@ -1198,7 +1235,8 @@ let currentPage='dashboard';
 const PAGE_TITLES={
   dashboard:'ダッシュボード',schedule:'スケジュール',
   eco:'エコフロー管理',flow:'業務フロー',admin:'管理コンソール',log:'更新ログ',
-  parts:'部品管理（基板構成・BOM・在庫）',
+  parts:'機種管理（基板構成・BOM・在庫）',
+  boards:'基板管理（基板マスタ・仕様・価格・使用部品）',
 };
 
 function showPage(page){
@@ -4397,6 +4435,25 @@ function renderAdmin(){
       </div>
     </div>
 
+    <!-- ハードウェア構成一覧表 取込 -->
+    <div class="admin-section">
+      <div class="admin-section-head"><h3>⚙️ ハードウェア構成一覧表 取込</h3>
+        <span style="font-size:11px;color:var(--text-muted);">取込済み ${Object.keys(state.hardwareSpecs).length}機種</span>
+      </div>
+      <div class="admin-section-body">
+        <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:6px;padding:10px 14px;margin-bottom:14px;font-size:11px;color:#92400e;">
+          ⚠️ 元の「【機種別】ハードウェア構成一覧表」PDFは画像化されたシートのため、座標だけでは機種・項目のズレを完全には防げません。
+          <strong>同じ表のExcelがあれば下のボタンで確実に自動取込</strong>できます。PDFしかない場合は、Claudeが目視で読み取り検証したサンプル（13機種）のみ取込ボタンで反映できます。
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <input type="file" id="hwspec-file-admin" accept=".xlsx,.xls" onchange="handleHardwareExcelImport(event)" style="font-size:12px;">
+          <span style="font-size:11px;color:var(--text-muted);">ハードウェア構成一覧表（xlsx）を選択</span>
+        </div>
+        <button class="btn btn-sm" onclick="importHardwareSpecSample()">📄 検証済みサンプル（PDF 260701・13機種）を取込</button>
+        <div id="hwspec-preview" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
     <!-- 生産計画PDF取込 -->
     <div class="admin-section">
       <div class="admin-section-head">
@@ -5060,6 +5117,153 @@ function _applySunDenshiNearTerm(nearTerm, sheetName){
 }
 
 /* ============================================================
+   ハードウェア構成一覧表 取込
+   ※ 元PDF（【機種別】ハードウェア構成一覧表）はスプレッドシートの
+   画像化されたページで、行ラベルが選択可能テキストとして存在せず
+   セル高さも機種列ごとに微妙にズレるため、座標ベースの自動解析では
+   1行ズレなどの誤登録リスクがある。そのため：
+   ①同一レイアウトのExcelがあればラベル文字列検索方式で確実に取込む
+   ②PDFしかない場合はClaudeが目視で読み取り、検証済みの分だけ
+     _HW_SPEC_SAMPLE としてボタン一つで取込めるようにしてある。
+============================================================ */
+const HW_LABEL_CANDIDATES={
+  code:      ['機種コード','機種名','型式コード'],
+  title:     ['タイトル','機種名称','題名'],
+  person:    ['担当者','担当'],
+  mainBoard: ['主制御基板'],
+  cpu:       ['CPU'],
+  lcdBoard:  ['液晶制御基板'],
+  vdp:       ['VDP'],
+  cgRom:     ['CGROM'],
+  effectIfBoard:['演出IF基板'],
+  lcdIfBoard:['液晶IF基板'],
+  rtc:       ['RTC'],
+  sram:      ['SRAM'],
+  lcdSize:   ['液晶'],
+  mainLcd:   ['メイン液晶'],
+  updateDate:['更新⽇','更新日'],
+  subFixDate:['サブFIX'],
+  applyDate: ['申請⽇','申請日'],
+};
+
+function handleHardwareExcelImport(e){
+  const file=e.target.files[0];if(!file)return;
+  e.target.value='';
+  _loadXLSX(function(){
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const wb=XLSX.read(ev.target.result,{type:'binary',cellDates:true});
+        const sheetName=wb.SheetNames[0];
+        const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,defval:null,raw:false});
+        parseHardwareSpecRows(rows,sheetName);
+      }catch(err){showToast('⚠️ Excel読み込みエラー: '+err.message);}
+    };
+    reader.readAsBinaryString(file);
+  });
+}
+
+function parseHardwareSpecRows(rows,sheetName){
+  // ラベル行を、先頭数列のどこかに一致する文字列を探して検出（行位置や列位置の揺れに耐える）
+  const rowIdxOf=(labels)=>{
+    for(let r=0;r<rows.length;r++){
+      const row=rows[r]||[];
+      for(let c=0;c<Math.min(row.length,6);c++){
+        const v=row[c]!=null?String(row[c]).trim():'';
+        if(v&&labels.includes(v))return r;
+      }
+    }
+    return -1;
+  };
+  const rowIdx={};
+  Object.keys(HW_LABEL_CANDIDATES).forEach(k=>{rowIdx[k]=rowIdxOf(HW_LABEL_CANDIDATES[k]);});
+
+  if(rowIdx.code<0){showToast('⚠️ 「機種コード」の行が見つかりませんでした');return;}
+  const codeRow=rows[rowIdx.code]||[];
+  const startCol=codeRow.findIndex((v,i)=>i>=2&&v&&String(v).trim().length>0);
+  if(startCol<0){showToast('⚠️ 機種データ列が見つかりませんでした');return;}
+
+  const found=[];
+  for(let col=startCol;col<codeRow.length;col++){
+    const code=String(codeRow[col]||'').trim();if(!code)continue;
+    const rec={code,source:'excel:'+sheetName};
+    Object.keys(HW_LABEL_CANDIDATES).forEach(k=>{
+      if(k==='code')return;
+      rec[k]=rowIdx[k]>=0?String((rows[rowIdx[k]]||[])[col]||'').trim():'';
+    });
+    found.push(rec);
+  }
+  if(!found.length){showToast('⚠️ 機種データが見つかりませんでした');return;}
+  _showHardwareSpecPreview(found,sheetName);
+}
+
+function _showHardwareSpecPreview(records,sourceLabel){
+  const div=document.getElementById('hwspec-preview');
+  if(!div)return;
+  const rows=records.map((r,i)=>`
+    <tr>
+      <td style="font-size:11px;font-weight:700;">${r.code}</td>
+      <td style="font-size:11px;">${r.title||'—'}</td>
+      <td style="font-size:11px;">${r.mainBoard||'—'}</td>
+      <td style="font-size:11px;">${r.lcdBoard||'—'}</td>
+      <td style="font-size:11px;">${r.effectIfBoard||'—'}</td>
+      <td style="font-size:11px;">${r.lcdIfBoard||'—'}</td>
+    </tr>`).join('');
+  div.innerHTML=`
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 14px;margin:12px 0;font-size:11px;color:#1e40af;">
+      ℹ️ ${sourceLabel} から ${records.length}機種を検出しました。列のズレがないか確認の上、取込んでください。
+    </div>
+    <div style="overflow:auto;max-height:320px;border:1px solid var(--border);border-radius:6px;">
+      <table style="font-size:12px;"><thead><tr style="position:sticky;top:0;background:#f8fafc;">
+        <th>機種コード</th><th>タイトル</th><th>主制御基板</th><th>液晶制御基板</th><th>演出IF基板</th><th>液晶IF基板</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>
+    <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick='_applyHardwareSpecs(${JSON.stringify(records).replace(/'/g,"&#39;")})'>✅ この内容で取込</button>
+    <button class="btn btn-sm" style="margin-left:8px;margin-top:10px;" onclick="document.getElementById('hwspec-preview').innerHTML=''">キャンセル</button>`;
+}
+
+function _applyHardwareSpecs(records){
+  records.forEach(r=>{
+    state.hardwareSpecs[r.code]={...r};
+    const mid=_guessMachineId(r.code);
+    if(mid){
+      const doc=_getBoardDoc(mid);
+      if(r.mainBoard&&!doc.A.model)doc.A.model=r.mainBoard;
+      if(r.lcdBoard&&!doc.B.model)doc.B.model=r.lcdBoard;
+    }
+  });
+  addLog(`⚙️ ハードウェア構成表取込: ${records.length}機種`);
+  saveToGAS(`ハードウェア構成表取込: ${records.length}機種`);
+  const div=document.getElementById('hwspec-preview');
+  if(div)div.innerHTML=`<div style="color:var(--success);font-weight:600;font-size:13px;padding:8px 0;">✅ ${records.length}機種のハードウェア構成を取込みました</div>`;
+  showToast(`✅ ${records.length}機種を取込みました`);
+  if(currentPage==='parts')renderParts();
+}
+
+/* Claudeが目視でPDFを読み取り、機種コードの相互参照（既存MACHINESの基板情報）
+   と突き合わせて値が一致することを確認できた分のみを収録した検証済みサンプル。
+   出典: 【機種別】ハードウェア構成一覧表(ぱちんこ)_260701.pdf 4ページ目 */
+const HW_SPEC_SAMPLE=[
+  {code:'C46', title:'地獄少女Ver', mainBoard:'M2401A(グループ間共通)', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'64G(HSS)', effectIfBoard:'E2101B', lcdIfBoard:'DE2101A1', rtc:'○', sram:'○', lcdSize:'19inch', updateDate:'2024/10/30'},
+  {code:'C46C', title:'地獄少女Ver', mainBoard:'M2401A(グループ間共通)', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'64G(HSS)', effectIfBoard:'E2101B', lcdIfBoard:'DE2101A1', rtc:'○', sram:'○', lcdSize:'19inch', updateDate:'2026/3/11'},
+  {code:'C47', title:'貞子2', mainBoard:'M2401A(グループ間共通)', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'64G(HSS)', effectIfBoard:'E2101B', lcdIfBoard:'DE2101A1', rtc:'○', sram:'○', lcdSize:'19inch', updateDate:'2026/4/8'},
+  {code:'A87', title:'とある禁書目録３', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'320G(HSS)', effectIfBoard:'E2501B', lcdIfBoard:'DE2502A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/3/11'},
+  {code:'A88', title:'FT4', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', lcdIfBoard:'DE1802A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/2/3'},
+  {code:'D62', title:'アリア6', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', lcdIfBoard:'DE2502A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/5/20'},
+  {code:'A89', title:'片田舎のおっさん', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', lcdIfBoard:'DE2502A or DE2101A1 or DE1802A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/7/1'},
+  {code:'D63', title:'とある超電磁砲3', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'320G(HSS)', effectIfBoard:'E2501B', lcdIfBoard:'DE2502A or DE2101A1 or DE1802A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2025/8/5'},
+  {code:'A90', title:'ダンまち', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/5/27'},
+  {code:'A91', title:'真リング', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/5/22'},
+  {code:'C48', title:'恋姫', mainBoard:'M2601A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'64G(HSS)', effectIfBoard:'E2501B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/5/20'},
+  {code:'D64', title:'女神のカフェテラス２', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'124G(HSS)', effectIfBoard:'E2501B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/6/16'},
+  {code:'D65', title:'魔法科', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'124G or 320G(HSS)', effectIfBoard:'E2501B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/6/10'},
+].map(r=>({...r, series:'PFK25/PFK30', person:'', mainLcd:'LQ190E1LW61', source:'PDF目視取込(260701, 検証済)'}));
+
+function importHardwareSpecSample(){
+  _showHardwareSpecPreview(HW_SPEC_SAMPLE,'ハードウェア構成一覧表(ぱちんこ)_260701 — 検証済みサンプル13機種');
+}
+
+/* ============================================================
    生産計画PDF取込（長納期化部品対応用）
 ============================================================ */
 async function handleProdPlanPDF(event){
@@ -5380,9 +5584,24 @@ function _getBoardDoc(machineId){
 function _getPartsStock(model){
   if(!model)return null;
   if(!state.partsStock[model]){
-    state.partsStock[model]={bom:[],stock:{new:0,reuse:0,eco:0},price:{new:0,reuse:0,eco:0}};
+    state.partsStock[model]={bom:[],stock:{new:0,reuse:0,eco:0},price:{new:0,reuse:0,eco:0},category:'',machineType:'',spec:'',memo:''};
   }
-  return state.partsStock[model];
+  const ps=state.partsStock[model];
+  if(ps.category===undefined)ps.category='';
+  if(ps.machineType===undefined)ps.machineType='';
+  if(ps.spec===undefined)ps.spec='';
+  if(ps.memo===undefined)ps.memo='';
+  return ps;
+}
+function _getBoardDriveFiles(model){
+  if(!state.boardDriveFiles[model])state.boardDriveFiles[model]=[];
+  return state.boardDriveFiles[model];
+}
+
+function updateBoardMasterField(model,field,value){
+  const ps=_getPartsStock(model);
+  ps[field]=value;
+  saveToGAS();
 }
 
 function updateBoardDoc(machineId,key,field,value){
@@ -5529,6 +5748,8 @@ function _machineMatches(machine,term){
   if(_hit(machine,term))return true;
   const doc=_getBoardDoc(machine);
   if(_hit(doc.assemblyQuoteUrl,term))return true;
+  const hw=_hwSpecFor(machine);
+  if(hw&&['code','title','mainBoard','cpu','lcdBoard','effectIfBoard','lcdIfBoard'].some(k=>_hit(hw[k],term)))return true;
   return BOARD_TYPE_DEFS.some(bt=>{
     const b=doc[bt.key];
     if(_hit(b.model,term)||_hit(b.specUrl,term)||_hit(b.pcbUrl,term))return true;
@@ -5537,6 +5758,29 @@ function _machineMatches(machine,term){
     if(!ps)return false;
     return ps.bom.some(r=>_hit(r.partNo,term)||_hit(r.name,term));
   });
+}
+
+function _hwSpecFor(machineId){
+  if(state.hardwareSpecs[machineId])return state.hardwareSpecs[machineId];
+  const found=Object.values(state.hardwareSpecs).find(r=>_guessMachineId(r.code)===machineId);
+  return found||null;
+}
+
+function _hwSpecLeafHtml(hw,term){
+  if(!hw)return`<div style="color:var(--text-muted);font-size:11px;">未取込です。管理コンソール →「⚙️ ハードウェア構成一覧表 取込」から取り込んでください。</div>`;
+  const rows=[
+    ['機種コード',hw.code],['タイトル',hw.title],['主制御基板',hw.mainBoard],['CPU',hw.cpu],
+    ['液晶制御基板',hw.lcdBoard],['VDP',hw.vdp],['CGROM',hw.cgRom],['演出IF基板',hw.effectIfBoard],
+    ['液晶IF基板',hw.lcdIfBoard],['RTC',hw.rtc],['SRAM',hw.sram],['液晶',hw.lcdSize],
+    ['メイン液晶',hw.mainLcd],['更新日',hw.updateDate],['サブFIX',hw.subFixDate],['申請日',hw.applyDate],
+  ].filter(([,v])=>v);
+  const cellsHtml=rows.map(([k,v])=>`
+    <div style="background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-width:120px;">
+      <div style="font-size:10px;color:var(--text-muted);">${k}</div>
+      <div style="font-size:12px;font-weight:600;${_hit(v,term)?'background:#fef9c3;':''}">${_esc(v)}</div>
+    </div>`).join('');
+  return`<div style="display:flex;flex-wrap:wrap;gap:6px;">${cellsHtml}</div>
+    <div style="margin-top:8px;font-size:10px;color:var(--text-muted);">出典: ${_esc(hw.source||'—')}</div>`;
 }
 
 function renderParts(){
@@ -5550,14 +5794,17 @@ function renderParts(){
   const treeHtml=machines.map(m=>{
     const doc=_getBoardDoc(m.id);
     const openMachine=!!term; // 検索中は一致した機種を展開
+    const hw=_hwSpecFor(m.id);
     const inner=
       _treeLeaf('01',`01_組立費見積書`,_urlLeafHtml(m.id,null,'assemblyQuoteUrl','組立費見積書',doc.assemblyQuoteUrl,term),false)
+      +_treeLeaf('HW',`⚙️ ハードウェア構成一覧表データ${hw?'':' <span style=\"color:var(--text-muted);font-weight:400;\">（未取込）</span>'}`,_hwSpecLeafHtml(hw,term),false)
       +_treeBranch(`02_各基板構成`,BOARD_TYPE_DEFS.map(bt=>_boardTypeTree(m.id,bt,term)).join(''),!!term);
-    return _treeBranch(`🎮 機種 ${_esc(m.id)}`,inner,openMachine);
+    const headerHtml=`🎮 機種 ${_esc(m.id)} <button class="btn btn-sm" style="margin-left:8px;font-weight:400;" onclick="event.stopPropagation();event.preventDefault();openDetailModal('machine','${m.id}')">📇 図鑑で見る</button>`;
+    return _treeBranch(headerHtml,inner,openMachine);
   }).join('');
 
   document.getElementById('page-parts').innerHTML=`
-    <div class="page-heading"><div><h2>🧩 部品管理</h2><p>機種 → 01_組立費見積書 / 02_各基板構成（A主基板・B液晶制御基板・C液晶演出基板）→ 仕様書・PCB見積・BOM・部品在庫（新品/リユース/エコ）</p></div></div>
+    <div class="page-heading"><div><h2>🧩 機種管理</h2><p>機種 → 01_組立費見積書 / 02_各基板構成（A主基板・B液晶制御基板・C液晶演出基板）→ 仕様書・PCB見積・BOM・部品在庫（新品/リユース/エコ）</p></div></div>
     <div class="filter-bar">
       <input id="parts-search" type="text" placeholder="🔍 機種・品番・部品名・URLで検索" value="${_esc(term)}" oninput="renderParts()"
         style="flex:1;min-width:240px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;">
@@ -5576,6 +5823,410 @@ function renderParts(){
   }
 }
 
+/* ============================================================
+   RENDER: 基板管理（基板マスタ — カテゴリ別・パチンコ/スロット・仕様・価格・使用部品）
+============================================================ */
+function addBoardMaster(category){
+  const model=(prompt(`追加する基板品番を入力してください（${BOARD_CATEGORY_DEFS.find(c=>c.key===category).label}）`)||'').trim();
+  if(!model)return;
+  _getPartsStock(model).category=category;
+  saveToGAS();
+  renderBoards();
+}
+function deleteBoardMaster(model){
+  if(!confirm(`基板「${model}」の登録を削除しますか？（在庫・BOMも削除されます）`))return;
+  delete state.partsStock[model];
+  addLog(`基板マスタ削除: ${model}`);
+  saveToGAS();
+  renderBoards();
+}
+
+function _boardMasterRow(model,term){
+  const ps=_getPartsStock(model);
+  const bomCount=ps.bom.length;
+  const bomTotal=ps.bom.reduce((s,r)=>s+(r.qty*r.unitPrice),0);
+  return`
+    <div class="table-wrap" style="margin-bottom:10px;">
+      <div class="table-toolbar">
+        <h2 style="${_hit(model,term)?'background:#fef9c3;':''}">${_esc(model)}</h2>
+        <div>
+          <button class="btn btn-sm" onclick="openDetailModal('board','${model}')">📇 図鑑で見る</button>
+          <button class="btn btn-sm" style="color:var(--danger);" onclick="deleteBoardMaster('${model}')">削除</button>
+        </div>
+      </div>
+      <div style="padding:12px 14px;display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div>
+          <label style="font-size:10px;color:var(--text-sub);display:block;">用途</label>
+          <select onchange="updateBoardMasterField('${model}','machineType',this.value)" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+            ${MACHINE_TYPE_OPTIONS.map(o=>`<option value="${o}"${ps.machineType===o?' selected':''}>${o||'（未設定）'}</option>`).join('')}
+          </select>
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <label style="font-size:10px;color:var(--text-sub);display:block;">仕様・概要</label>
+          <input value="${_esc(ps.spec)}" placeholder="例: VDP AG5 / CGROM 64G(HSS)" onchange="updateBoardMasterField('${model}','spec',this.value)"
+            style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;${_hit(ps.spec,term)?'background:#fef9c3;':''}">
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--text-sub);display:block;">価格（新品単価）</label>
+          <input type="number" value="${ps.price.new}" onchange="updatePartsStockField('${model}','price','new',this.value)"
+            style="width:100px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:right;">円
+        </div>
+        <div style="display:flex;gap:8px;">
+          <div style="text-align:center;"><div style="font-size:10px;color:var(--text-sub);">新品在庫</div><div style="font-size:14px;font-weight:700;">${ps.stock.new}</div></div>
+          <div style="text-align:center;"><div style="font-size:10px;color:var(--text-sub);">リユース</div><div style="font-size:14px;font-weight:700;">${ps.stock.reuse}</div></div>
+          <div style="text-align:center;"><div style="font-size:10px;color:var(--text-sub);">エコ</div><div style="font-size:14px;font-weight:700;">${ps.stock.eco}</div></div>
+        </div>
+      </div>
+      <div style="padding:0 14px 14px;">
+        <details style="margin-top:2px;">
+          <summary style="cursor:pointer;font-size:11px;font-weight:600;color:var(--text-sub);">🔩 使用部品（BOM） ${bomCount}点 ／ 合計 ¥${bomTotal.toLocaleString('ja-JP')}</summary>
+          <div style="margin-top:8px;">${_bomLeafHtml(model,term)}</div>
+        </details>
+      </div>
+    </div>`;
+}
+
+function _boardMasterMatches(model,term){
+  if(!term)return true;
+  if(_hit(model,term))return true;
+  const ps=_getPartsStock(model);
+  if(_hit(ps.spec,term)||_hit(ps.machineType,term))return true;
+  return ps.bom.some(r=>_hit(r.partNo,term)||_hit(r.name,term));
+}
+
+function renderBoards(){
+  const searchEl=document.getElementById('boards-search');
+  const term=(searchEl?searchEl.value:'').trim().toLowerCase();
+  const cursorPos=searchEl?searchEl.selectionStart:null;
+  const hadFocus=document.activeElement===searchEl;
+
+  const allModels=Object.keys(state.partsStock);
+
+  const sectionsHtml=BOARD_CATEGORY_DEFS.map(cat=>{
+    const models=allModels.filter(m=>(state.partsStock[m].category||'')===cat.key && _boardMasterMatches(m,term));
+    const rowsHtml=models.map(m=>_boardMasterRow(m,term)).join('');
+    return _treeBranch(
+      `${cat.key}_${cat.label} <span style="font-weight:400;color:var(--text-sub);">（${models.length}件）</span>`,
+      rowsHtml||`<div style="color:var(--text-muted);font-size:11px;padding:8px 0;">登録なし</div>`
+      +`<button class="btn btn-sm" style="margin-top:8px;" onclick="addBoardMaster('${cat.key}')">＋ ${cat.label}を追加</button>`,
+      !!term
+    );
+  }).join('');
+
+  const uncategorized=allModels.filter(m=>!(state.partsStock[m].category) && _boardMasterMatches(m,term));
+  const uncategorizedHtml=uncategorized.length?_treeBranch(
+    `未分類 <span style="font-weight:400;color:var(--text-sub);">（${uncategorized.length}件・機種管理から登録された品番など）</span>`,
+    uncategorized.map(m=>_boardMasterRow(m,term)).join(''),!!term
+  ):'';
+
+  document.getElementById('page-boards').innerHTML=`
+    <div class="page-heading"><div><h2>🔧 基板管理</h2><p>主制御基板(M)・液晶制御基板(D)・液晶IF基板(DE)・演出基板(E)・サブ制御基板(C) — パチンコ/スロット区分・仕様・価格・使用部品を品番単位で管理</p></div></div>
+    <div class="filter-bar">
+      <input id="boards-search" type="text" placeholder="🔍 品番・仕様・部品名で検索" value="${_esc(term)}" oninput="renderBoards()"
+        style="flex:1;min-width:240px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;">
+      <button class="btn btn-sm" onclick="importBoardMasterSeed()">📋 初期データ取込</button>
+    </div>
+    <div class="table-wrap"><div style="padding:14px;">${sectionsHtml}${uncategorizedHtml}</div></div>`;
+
+  const newSearchEl=document.getElementById('boards-search');
+  if(newSearchEl&&hadFocus){
+    newSearchEl.focus();
+    if(cursorPos!=null)newSearchEl.setSelectionRange(cursorPos,cursorPos);
+  }
+}
+
+/* 基板マスタ 初期データ（ユーザー提供の一覧をもとに登録） */
+const BOARD_MASTER_SEED=[
+  {model:'M1602B', category:'M', machineType:'スロット'},
+  {model:'M1805D', category:'M', machineType:'スロット'},
+  {model:'M2104A', category:'M', machineType:'スロット'},
+  {model:'M2104A1',category:'M', machineType:'スロット'},
+  {model:'M2402A', category:'M', machineType:'スロット'},
+  {model:'M2401A', category:'M', machineType:'パチンコ'},
+  {model:'M2503A', category:'M', machineType:'パチンコ'},
+  {model:'D1401C', category:'D', machineType:'パチンコ/スロット'},
+  {model:'D2101A', category:'D', machineType:'パチンコ/スロット'},
+  {model:'D2101A1',category:'D', machineType:'パチンコ/スロット'},
+  {model:'D1901B', category:'D', machineType:''},
+  {model:'DE1802A',category:'DE',machineType:'パチンコ/スロット'},
+  {model:'DE2101A',category:'DE',machineType:'パチンコ'},
+  {model:'DE2103A1',category:'DE',machineType:'パチンコ'},
+  {model:'DE2101A1',category:'DE',machineType:'パチンコ'},
+  {model:'DE1607A',category:'DE',machineType:'スロット'},
+  {model:'DE1606A',category:'DE',machineType:'スロット'},
+  {model:'E1501C', category:'E', machineType:'スロット'},
+  {model:'E1902B', category:'E', machineType:'スロット'},
+  {model:'E2102B', category:'E', machineType:'パチンコ/スロット'},
+  {model:'E2002B', category:'E', machineType:'パチンコ'},
+  {model:'E2101B', category:'E', machineType:'パチンコ'},
+  {model:'E2301B', category:'E', machineType:'パチンコ'},
+  {model:'E2501B', category:'E', machineType:'パチンコ'},
+  {model:'E2503A', category:'E', machineType:'パチンコ'},
+  {model:'C1601E', category:'C', machineType:''},
+  {model:'C1901A', category:'C', machineType:''},
+  {model:'C2101B', category:'C', machineType:''},
+  {model:'C2401A', category:'C', machineType:''},
+  {model:'C2202B', category:'C', machineType:''},
+  {model:'C2501C', category:'C', machineType:''},
+  {model:'C2502A', category:'C', machineType:''},
+  {model:'C2501B', category:'C', machineType:''},
+];
+function importBoardMasterSeed(){
+  if(!confirm(`初期データ（${BOARD_MASTER_SEED.length}件の基板品番）を取込みますか？\n既存の在庫・BOMデータはそのまま保持され、用途・カテゴリのみ設定されます。`))return;
+  let count=0;
+  BOARD_MASTER_SEED.forEach(s=>{
+    const ps=_getPartsStock(s.model);
+    ps.category=s.category;
+    if(s.machineType)ps.machineType=s.machineType;
+    count++;
+  });
+  addLog(`🔧 基板マスタ初期データ取込: ${count}件`);
+  saveToGAS(`基板マスタ初期データ取込: ${count}件`);
+  showToast(`✅ 基板マスタ ${count}件を取込みました`);
+  renderBoards();
+}
+
+/* ============================================================
+   図鑑ビュー（機種管理・基板管理 共通の詳細モーダル）
+   写真・メモ・PDF/Excel添付ファイルの入力に対応
+============================================================ */
+let detailState={type:null,id:null};
+
+function _detailList(type){
+  return type==='machine'
+    ? [...MACHINES].map(m=>m.id).sort()
+    : Object.keys(state.partsStock).sort();
+}
+
+function openDetailModal(type,id){
+  detailState={type,id};
+  document.getElementById('detail-modal').classList.add('open');
+  _renderDetailModal();
+}
+function closeDetailModal(){
+  document.getElementById('detail-modal').classList.remove('open');
+}
+function detailNav(dir){
+  const list=_detailList(detailState.type);
+  const idx=list.indexOf(detailState.id);
+  if(idx<0)return;
+  const next=(idx+dir+list.length)%list.length;
+  detailState.id=list[next];
+  _renderDetailModal();
+}
+
+function _renderDetailModal(){
+  const {type,id}=detailState;
+  const list=_detailList(type);
+  const idx=list.indexOf(id);
+  document.getElementById('detail-modal-position').textContent=idx>=0?`${idx+1} / ${list.length}`:'';
+  if(type==='machine'){
+    document.getElementById('detail-modal-title').textContent=`📇 機種図鑑 — ${id}`;
+    document.getElementById('detail-modal-body').innerHTML=renderMachineDetailBody(id);
+  }else{
+    document.getElementById('detail-modal-title').textContent=`📇 基板図鑑 — ${id}`;
+    document.getElementById('detail-modal-body').innerHTML=renderBoardDetailBody(id);
+  }
+}
+
+function _photoBlock(photo,uploadHandlerAttr){
+  return`
+    <div style="flex-shrink:0;width:180px;">
+      <div style="width:180px;height:180px;border-radius:10px;overflow:hidden;background:#f1f5f9;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;">
+        ${photo&&photo.url?`<img src="${photo.url}" style="width:100%;height:100%;object-fit:cover;">`:`<span style="color:var(--text-muted);font-size:12px;">写真なし</span>`}
+      </div>
+      <label class="btn btn-sm" style="display:block;text-align:center;margin-top:6px;cursor:pointer;">
+        📷 写真を${photo?'変更':'追加'}
+        <input type="file" accept="image/*" style="display:none;" ${uploadHandlerAttr}>
+      </label>
+    </div>`;
+}
+
+function _fileListBlock(files,label){
+  const rows=files.map(f=>`<div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;padding:3px 0;">
+      <a href="${f.url}" target="_blank" style="color:var(--primary);text-decoration:none;">📄 ${_esc(f.fileName)}</a>
+      <span style="color:var(--text-muted);">${f.uploadedAt||''}</span>
+    </div>`).join('');
+  return`<div style="font-size:11px;font-weight:700;margin-bottom:4px;">${label}（PDF・Excel等）</div>
+    ${rows||'<div style="color:var(--text-muted);font-size:11px;">添付ファイルなし</div>'}`;
+}
+
+function renderMachineDetailBody(id){
+  const m=MACHINES.find(x=>x.id===id);
+  if(!m)return`<div style="color:var(--text-muted);">機種が見つかりません</div>`;
+  const photo=state.machinePhotos[id];
+  const sc=state.schedules[id]||{};
+  const doc=_getBoardDoc(id);
+  const hw=_hwSpecFor(id);
+  const files=_getDriveFiles(id);
+  const boardsSummary=BOARD_TYPE_DEFS.map(bt=>`<div style="font-size:11px;"><strong>${bt.key}_${bt.label}:</strong> ${_esc(doc[bt.key].model)||'—'}</div>`).join('');
+
+  return`
+    <div style="display:flex;gap:20px;flex-wrap:wrap;">
+      ${_photoBlock(photo,`onchange="handleMachinePhotoUpload(event,'${id}')"`)}
+      <div style="flex:1;min-width:280px;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+          <span style="font-size:20px;font-weight:700;">${id}</span>
+          ${badgeHtml(state.statuses[id])}
+        </div>
+        <div style="font-size:12px;color:var(--text-sub);display:grid;grid-template-columns:auto 1fr;gap:4px 10px;">
+          <span>担当者</span><span>${_esc(m.person)||'—'}</span>
+          <span>適合</span><span>${_esc(m.compliance)||'—'}</span>
+          <span>量産台数</span><span>${_esc(m.prodQty)||'—'}</span>
+          <span>ROM</span><span>${_esc(m.rom)||'—'}</span>
+          <span>量産出荷</span><span>${sc.prodShip||'—'}</span>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;">🧩 基板構成</div>
+      ${boardsSummary}
+    </div>
+    ${hw?`<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;">⚙️ ハードウェア構成</div>
+      <div style="font-size:11px;color:var(--text-sub);">主制御:${_esc(hw.mainBoard)||'—'} / 液晶制御:${_esc(hw.lcdBoard)||'—'} / 演出IF:${_esc(hw.effectIfBoard)||'—'}</div>
+    </div>`:''}
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">📝 メモ</div>
+      <textarea onchange="updateMachineMemo('${id}',this.value)" rows="3"
+        style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;resize:vertical;">${_esc(state.notes[id])}</textarea>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      ${_fileListBlock(files,'📎 添付資料')}
+      <label class="btn btn-sm" style="margin-top:8px;cursor:pointer;display:inline-block;">
+        ＋ PDF/Excelを追加
+        <input type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" style="display:none;" onchange="handleDriveUpload(event,'${id}')">
+      </label>
+    </div>`;
+}
+
+function renderBoardDetailBody(model){
+  const ps=_getPartsStock(model);
+  if(!ps)return`<div style="color:var(--text-muted);">基板が見つかりません</div>`;
+  const photo=state.boardPhotos[model];
+  const files=_getBoardDriveFiles(model);
+  const catLabel=BOARD_CATEGORY_DEFS.find(c=>c.key===ps.category)?.label||'未分類';
+  const bomTotal=ps.bom.reduce((s,r)=>s+(r.qty*r.unitPrice),0);
+
+  return`
+    <div style="display:flex;gap:20px;flex-wrap:wrap;">
+      ${_photoBlock(photo,`onchange="handleBoardPhotoUpload(event,'${model}')"`)}
+      <div style="flex:1;min-width:280px;">
+        <div style="font-size:20px;font-weight:700;margin-bottom:6px;">${_esc(model)}</div>
+        <div style="font-size:12px;color:var(--text-sub);display:grid;grid-template-columns:auto 1fr;gap:4px 10px;">
+          <span>カテゴリ</span><span>${_esc(ps.category)} ${catLabel}</span>
+          <span>用途</span><span>${_esc(ps.machineType)||'（未設定）'}</span>
+          <span>価格（新品）</span><span>¥${Number(ps.price.new||0).toLocaleString('ja-JP')}</span>
+          <span>在庫</span><span>新品${ps.stock.new} / リユース${ps.stock.reuse} / エコ${ps.stock.eco}</span>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">仕様・概要</div>
+      <input value="${_esc(ps.spec)}" onchange="updateBoardMasterField('${model}','spec',this.value)"
+        style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+    </div>
+    <div style="margin-top:12px;">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">🔩 使用部品（BOM） ${ps.bom.length}点 ／ 合計 ¥${bomTotal.toLocaleString('ja-JP')}</div>
+      ${_bomLeafHtml(model,'')}
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">📝 メモ</div>
+      <textarea onchange="updateBoardMemo('${model}',this.value)" rows="3"
+        style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;resize:vertical;">${_esc(ps.memo)}</textarea>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      ${_fileListBlock(files,'📎 添付資料')}
+      <label class="btn btn-sm" style="margin-top:8px;cursor:pointer;display:inline-block;">
+        ＋ PDF/Excelを追加
+        <input type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" style="display:none;" onchange="handleBoardDriveUpload(event,'${model}')">
+      </label>
+    </div>`;
+}
+
+function updateMachineMemo(id,value){
+  state.notes[id]=value;
+  const m=MACHINES.find(x=>x.id===id);
+  if(m)m.notes=value;
+  saveToGAS();
+  addLog(`メモ更新: ${id}`);
+}
+function updateBoardMemo(model,value){
+  _getPartsStock(model).memo=value;
+  saveToGAS();
+  addLog(`基板メモ更新: ${model}`);
+}
+
+function _uploadPhoto(file,folderKey,onDone){
+  if(file.size>20*1024*1024){showToast('⚠️ ファイルサイズは20MB以下にしてください');return;}
+  showToast('📤 写真をアップロード中...');
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const base64=ev.target.result.split(',')[1];
+    if(typeof google!=='undefined'&&google.script){
+      google.script.run
+        .withSuccessHandler(res=>{
+          try{
+            const r=JSON.parse(res);
+            if(r.success){onDone({fileId:r.fileId,fileName:r.fileName,url:r.url,uploadedAt:r.uploadedAt});showToast('✅ 写真を更新しました');}
+            else showToast('⚠️ '+r.error);
+          }catch(e){showToast('⚠️ レスポンスエラー');}
+        })
+        .withFailureHandler(err=>showToast('⚠️ '+err.message))
+        .uploadFileToDrive(file.name,base64,file.type||'image/jpeg',folderKey);
+    }else{showToast('⚠️ GAS環境でのみアップロード可能です');}
+  };
+  reader.readAsDataURL(file);
+}
+
+function handleMachinePhotoUpload(event,id){
+  const file=event.target.files[0];if(!file)return;
+  event.target.value='';
+  _uploadPhoto(file,id,photo=>{
+    state.machinePhotos[id]=photo;
+    saveToGAS();
+    if(detailState.type==='machine'&&detailState.id===id)_renderDetailModal();
+  });
+}
+function handleBoardPhotoUpload(event,model){
+  const file=event.target.files[0];if(!file)return;
+  event.target.value='';
+  _uploadPhoto(file,'board_'+model,photo=>{
+    state.boardPhotos[model]=photo;
+    saveToGAS();
+    if(detailState.type==='board'&&detailState.id===model)_renderDetailModal();
+  });
+}
+
+function handleBoardDriveUpload(event,model){
+  const file=event.target.files[0];
+  if(!file)return;
+  event.target.value='';
+  if(file.size>20*1024*1024){showToast('⚠️ ファイルサイズは20MB以下にしてください');return;}
+  showToast('📤 アップロード中...');
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const base64=ev.target.result.split(',')[1];
+    if(typeof google!=='undefined'&&google.script){
+      google.script.run
+        .withSuccessHandler(res=>{
+          try{
+            const r=JSON.parse(res);
+            if(r.success){
+              _getBoardDriveFiles(model).push({fileId:r.fileId,fileName:r.fileName,url:r.url,uploadedAt:r.uploadedAt});
+              saveToGAS();
+              showToast('✅ アップロード完了: '+r.fileName);
+              if(detailState.type==='board'&&detailState.id===model)_renderDetailModal();
+            }else{showToast('⚠️ '+r.error);}
+          }catch(e){showToast('⚠️ レスポンスエラー');}
+        })
+        .withFailureHandler(err=>showToast('⚠️ '+err.message))
+        .uploadFileToDrive(file.name,base64,file.type||'application/octet-stream','board_'+model);
+    }else{showToast('⚠️ GAS環境でのみアップロード可能です');}
+  };
+  reader.readAsDataURL(file);
+}
+
 function renderPage(page){
   if(page==='dashboard')renderDashboard();
   else if(page==='schedule')renderSchedule();
@@ -5585,6 +6236,7 @@ function renderPage(page){
   else if(page==='log')renderLog();
   else if(page==='future')renderFuturePage();
   else if(page==='parts')renderParts();
+  else if(page==='boards')renderBoards();
 }
 
 /* ============================================================
@@ -5628,6 +6280,10 @@ function _init(saved){
       if(s.futureModels)state.futureModels=s.futureModels;
       if(s.boardDocs)Object.assign(state.boardDocs,s.boardDocs);
       if(s.partsStock)Object.assign(state.partsStock,s.partsStock);
+      if(s.hardwareSpecs)Object.assign(state.hardwareSpecs,s.hardwareSpecs);
+      if(s.machinePhotos)Object.assign(state.machinePhotos,s.machinePhotos);
+      if(s.boardPhotos)Object.assign(state.boardPhotos,s.boardPhotos);
+      if(s.boardDriveFiles)Object.assign(state.boardDriveFiles,s.boardDriveFiles);
       if(s.driveFiles)Object.assign(state.driveFiles,s.driveFiles);
       if(s.linkageUrlOverrides)Object.assign(state.linkageUrlOverrides,s.linkageUrlOverrides);
       if(s.config&&s.config.tabSettings)Object.assign(state.config.tabSettings,s.config.tabSettings);
