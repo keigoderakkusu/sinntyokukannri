@@ -13,9 +13,16 @@ function doGet(e) {
     output.setMimeType(ContentService.MimeType.JSON);
     return output;
   }
-  return HtmlService.createHtmlOutputFromFile('index')
+  // index.html はエディタの貼り付け上限を避けるため index_part2.html に分割し、
+  // テンプレート機能（<?!= include(...) ?>）で結合して配信する
+  return HtmlService.createTemplateFromFile('index').evaluate()
     .setTitle('営業進捗管理システム')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/** index.html 内の <?!= include('ファイル名'); ?> から呼ばれる結合用ヘルパー */
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
 /* ============================================================

@@ -1,3 +1,239 @@
+
+/* ============================================================
+   RENDER: SCHEDULE (Gantt + drag)
+============================================================ */
+function renderSchedule(){
+  const MONTHS=[
+    {label:'3月',days:31},{label:'4月',days:30},{label:'5月',days:31},
+    {label:'6月',days:30},{label:'7月',days:31},{label:'8月',days:31},{label:'9月',days:30},
+  ];
+  // pct: date string → % position in gantt
+  const datePct=d=>{
+    if(!d)return null;
+    const p=(new Date(d)-GANTT_START)/(GANTT_TOTAL*86400000)*100;
+    return Math.min(100,Math.max(0,p));
+  };
+  const todayPct=datePct(TODAY);
+
+  // Phase color legend
+  const PHASE_DEFS=[
+    {key:'sampleImpl',label:'見本機実装',color:'#7c3aed',prevKey:null},
+    {key:'sampleAssy',label:'見本機組立',color:'#0891b2',prevKey:'sampleImpl'},
+    {key:'sampleShip',label:'見本機出荷',color:'#1d4ed8',prevKey:'sampleAssy'},
+    {key:'prodImpl',  label:'量産実装',  color:'#15803d',prevKey:null},
+    {key:'prodAssy',  label:'量産組立',  color:'#b45309',prevKey:'prodImpl'},
+    {key:'prodShip',  label:'量産出荷',  color:'#dc2626',prevKey:'prodAssy'},
+  ];
+
+  const BAR_H=24, LANE_H=30, TOP_PAD=8, BOT_PAD=8, MIN_BAR_DAYS=10;
+
+  let gridLines='',acc=0;
+  MONTHS.forEach((m,i)=>{
+    if(i>0)gridLines+=`<div class="gantt-month-line" style="left:${acc/GANTT_TOTAL*100}%;"></div>`;
+    acc+=m.days;
+  });
+
+  const monthHdr=MONTHS.map(m=>`<div style="flex:${m.days};border-right:1px solid var(--border-light);padding:6px 0;text-align:center;font-size:11px;font-weight:600;color:var(--text-sub);">${m.label}</div>`).join('');
+
+  const rowsHtml=MACHINES.map(m=>{
+    const sc=state.schedules[m.id]||{};
+
+    // Build range bars: each bar spans from prevMilestone → thisMilestone
+    const bars=[];
+    PHASE_DEFS.forEach(def=>{
+      const endDateStr=sc[def.key];
+      if(!endDateStr)return;
+      const endD=new Date(endDateStr);
+      let startD;
+      if(def.prevKey&&sc[def.prevKey]){
+        startD=new Date(sc[def.prevKey]);
+      }else{
+        // No prev date — use MIN_BAR_DAYS before milestone
+        startD=new Date(endD);
+        startD.setDate(startD.getDate()-MIN_BAR_DAYS);
+        if(startD<GANTT_START)startD=new Date(GANTT_START);
+      }
+      // Enforce minimum 3-day visual width
+      if((endD-startD)/86400000<3){
+        startD=new Date(endD);startD.setDate(startD.getDate()-3);
+        if(startD<GANTT_START)startD=new Date(GANTT_START);
+      }
+      const sp=Math.max(0,(startD-GANTT_START)/(GANTT_TOTAL*86400000)*100);
+      const ep=datePct(endDateStr)||0;
+      bars.push({
+        key:def.key,prevKey:def.prevKey||'',label:def.label,color:def.color,
+        startPct:sp,endPct:ep,
+        widthPct:Math.max(ep-sp,0.8),
+        dateStr:endDateStr,lane:0,
+      });
+    });
+
+    // Greedy lane assignment — sort by start, assign to first non-overlapping lane
+    bars.sort((a,b)=>a.startPct-b.startPct);
+    const laneEnds=[]; // laneEnds[i] = endPct of last bar placed in lane i
+    bars.forEach(bar=>{
+      let lane=0;
+      // A small overlap threshold (0.5%) avoids false positives from rounding
+      while(lane<laneEnds.length&&laneEnds[lane]>bar.startPct+0.5)lane++;
+      bar.lane=lane;
+      laneEnds[lane]=bar.endPct;
+    });
+
+    const maxLane=bars.length>0?Math.max(...bars.map(b=>b.lane)):0;
+    const rowH=TOP_PAD+(maxLane+1)*LANE_H+BOT_PAD;
+
+    const barsHtml=bars.map(bar=>{
+      const top=TOP_PAD+bar.lane*LANE_H;
+      const done=isPast(bar.dateStr);
+      const near=!done&&isNear(bar.dateStr);
+      const color=done?'#94a3b8':bar.color;
+      const outline=near?`outline:2px solid #fbbf24;outline-offset:1px;`:'';
+      const shortLabel=bar.label.replace('見本機','').replace('量産','');
+      return`<div class="gantt-bar"
+        data-machine="${m.id}" data-phase="${bar.key}" data-prev="${bar.prevKey}"
+        style="left:${bar.startPct.toFixed(2)}%;width:${bar.widthPct.toFixed(2)}%;top:${top}px;height:${BAR_H}px;background:${color};${outline}cursor:grab;display:flex;align-items:center;"
+        onmousedown="startGanttMoveOrResize(event,'move')"
+        title="${bar.label}: ${fmtD(bar.dateStr)}${done?' ✅':''}${near?' ⚠️直近':''}">
+        <div class="gantt-resize-handle gantt-resize-left" onmousedown="startGanttMoveOrResize(event,'left')"></div>
+        <span class="gantt-bar-label">${shortLabel} ${fmtD(bar.dateStr)}</span>
+        <div class="gantt-resize-handle gantt-resize-right" onmousedown="startGanttMoveOrResize(event,'right')"></div>
+      </div>`;
+    }).join('');
+
+    return`<div style="display:flex;border-bottom:1px solid var(--border-light);">
+      <div class="gantt-row-head" style="min-height:${rowH}px;">
+        <div style="font-weight:700;font-size:14px;">${m.id}</div>
+        <div style="font-size:11px;color:var(--text-sub);margin-top:2px;">${m.person}</div>
+        <div style="margin-top:4px;">${badgeHtml(state.statuses[m.id])}</div>
+      </div>
+      <div class="gantt-timeline" style="flex:1;height:${rowH}px;">
+        ${gridLines}
+        ${todayPct!==null?`<div class="gantt-today-line" style="left:${todayPct}%;"></div>`:''}
+        ${barsHtml}
+      </div>
+    </div>`;
+  }).join('');
+
+  // 将来機種をGanttに表示（日程が設定されているもの）
+  const futureRowsHtml=state.futureModels.filter(fm=>
+    fm.sampleDeliveryDate||fm.prodFirstImplDate||fm.prodFirstAssyDate||fm.prodFirstDeliveryDate
+  ).map(fm=>{
+    const FUTURE_PHASE_DEFS=[
+      {key:'sampleDeliveryDate',label:'見本機納品',color:'#7c3aed',prevKey:null},
+      {key:'prodFirstImplDate', label:'初回実装',  color:'#15803d',prevKey:null},
+      {key:'prodFirstAssyDate', label:'初回組立',  color:'#b45309',prevKey:'prodFirstImplDate'},
+      {key:'prodFirstDeliveryDate',label:'初回納品',color:'#dc2626',prevKey:'prodFirstAssyDate'},
+    ];
+    const fbars=[];
+    FUTURE_PHASE_DEFS.forEach(def=>{
+      const endDateStr=fm[def.key]; if(!endDateStr)return;
+      const endD=new Date(endDateStr);
+      let startD;
+      if(def.prevKey&&fm[def.prevKey]) startD=new Date(fm[def.prevKey]);
+      else{ startD=new Date(endD); startD.setDate(startD.getDate()-10); }
+      if(startD<GANTT_START)startD=new Date(GANTT_START);
+      if((endD-startD)/86400000<3){startD=new Date(endD);startD.setDate(startD.getDate()-3);}
+      const sp=Math.max(0,(startD-GANTT_START)/(GANTT_TOTAL*86400000)*100);
+      const ep=datePct(endDateStr)||0;
+      fbars.push({key:def.key,label:def.label,color:def.color,startPct:sp,endPct:ep,widthPct:Math.max(ep-sp,0.8),dateStr:endDateStr,lane:0});
+    });
+    fbars.sort((a,b)=>a.startPct-b.startPct);
+    const laneE=[];
+    fbars.forEach(b=>{let l=0;while(l<laneE.length&&laneE[l]>b.startPct+0.5)l++;b.lane=l;laneE[l]=b.endPct;});
+    const maxLane=fbars.length>0?Math.max(...fbars.map(b=>b.lane)):0;
+    const rowH=TOP_PAD+(maxLane+1)*LANE_H+BOT_PAD;
+    const barsH=fbars.map(bar=>{
+      const top=TOP_PAD+bar.lane*LANE_H;
+      return`<div style="position:absolute;left:${bar.startPct.toFixed(2)}%;width:${bar.widthPct.toFixed(2)}%;top:${top}px;height:${BAR_H}px;background:${bar.color};opacity:0.45;border-radius:4px;border:2px dashed rgba(255,255,255,.6);display:flex;align-items:center;padding:0 6px;font-size:10px;font-weight:600;color:#fff;pointer-events:none;overflow:hidden;white-space:nowrap;"
+        title="${bar.label}: ${fmtD(bar.dateStr)}（将来計画）">
+        ${bar.label.replace('初回','')} ${fmtD(bar.dateStr)}
+      </div>`;
+    }).join('');
+    return`<div style="display:flex;border-bottom:1px dashed var(--border-light);background:#fafbff;">
+      <div class="gantt-row-head" style="min-height:${rowH}px;background:#f0f4ff;">
+        <div style="font-weight:700;font-size:13px;color:#2563eb;">${fm.code}</div>
+        <div style="font-size:10px;color:var(--text-sub);margin-top:2px;">${fm.name||''}</div>
+        <span class="badge badge-info" style="font-size:9px;margin-top:4px;">将来計画</span>
+      </div>
+      <div class="gantt-timeline" style="flex:1;height:${rowH}px;">
+        ${gridLines}
+        ${todayPct!==null?`<div class="gantt-today-line" style="left:${todayPct}%;"></div>`:''}
+        ${barsH}
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('page-schedule').innerHTML=`
+    <div class="page-heading">
+      <div>
+        <h2>📅 スケジュール</h2>
+        <p>2026年3月〜9月 ｜ 今日: ${fmtD(TODAY)} ｜ <strong>バー中央ドラッグ</strong>で移動 ｜ <strong>左右端ドラッグ</strong>で期間変更 ｜ 日程重複時はレーン分け表示</p>
+      </div>
+    </div>
+    <div class="gantt-container">
+      <div style="display:flex;border-bottom:2px solid var(--border);">
+        <div style="width:190px;min-width:190px;border-right:1px solid var(--border-light);padding:8px 14px;background:#f8fafc;font-size:11px;font-weight:700;color:var(--text-sub);">機種</div>
+        <div style="flex:1;display:flex;min-width:600px;">${monthHdr}</div>
+      </div>
+      <div style="min-width:790px;">
+        ${rowsHtml}
+        ${futureRowsHtml?`
+          <div style="padding:8px 14px;background:#eff6ff;border-top:2px solid #bfdbfe;font-size:11px;font-weight:700;color:#1d4ed8;">
+            🔭 将来機種計画（参考表示）
+          </div>
+          ${futureRowsHtml}
+        `:''}
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text-muted);">
+      ${PHASE_DEFS.map(p=>`<span style="display:flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:3px;background:${p.color};display:inline-block;"></span>${p.label}</span>`).join('')}
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:3px;background:#94a3b8;display:inline-block;"></span>完了済み</span>
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:2px;height:14px;background:var(--danger);display:inline-block;"></span>今日</span>
+      <span style="color:var(--text-muted);">※ 同一機種内でスケジュールが重なる場合、バーを別レーンに表示</span>
+    </div>`;
+}
+
+/* ============================================================
+   RENDER: ECO FLOW (Drag & Drop)
+============================================================ */
+function renderEco(){
+  const machine=state.selectedMachine;
+  const eco=state.eco[machine]||{};
+  const totalInFlow=Object.entries(eco).filter(([k])=>k!=='delivered'&&k!=='newParts').reduce((a,[,v])=>a+v,0);
+  const delivered=eco.delivered||0;
+  const newParts=eco.newParts||0;
+  const assembledTotal=(eco.assembly||0)+newParts;
+  const reusePct=assembledTotal>0?Math.round((eco.assembly||0)/assembledTotal*100):0;
+  const newPct=assembledTotal>0?100-reusePct:0;
+
+  const machineSelHtml=MACHINES.map(m=>`<option value="${m.id}"${m.id===machine?' selected':''}>${m.id}</option>`).join('');
+
+  const chainHtml=ECO_STAGES.map((s,i)=>{
+    const qty=eco[s.id]||0;
+    const hasUnits=qty>0;
+    const isDelivered=s.id==='delivered';
+    const nodeClass=`eco-node${isDelivered&&hasUnits?' delivered':hasUnits?' has-units':''}`;
+    const arrow=i>0?`<div class="eco-arrow">→</div>`:'';
+    return`${arrow}
+      <div class="${nodeClass}" draggable="true"
+        data-machine="${machine}" data-stage="${s.id}"
+        ondragstart="onEcoDragStart(event)" ondragend="onEcoDragEnd(event)"
+        ondragover="onEcoDragOver(event)" ondragleave="onEcoDragLeave(event)" ondrop="onEcoDrop(event)">
+        <div style="font-size:11px;font-weight:700;">${s.label}</div>
+        <div style="font-size:10px;color:var(--text-sub);margin-bottom:6px;">${s.sub}</div>
+        <div class="eco-count" onclick="openEcoModal('${machine}','${s.id}')"
+          style="color:${hasUnits?(isDelivered?'var(--success)':'var(--primary)'):'var(--text-muted)'};"
+          title="クリックで台数編集">${qty}</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;">台</div>
+        <button class="btn btn-sm" onclick="openEcoModal('${machine}','${s.id}')">更新</button>
+      </div>`;
+  }).join('');
+
+  const tableRows=ECO_STAGES.map(s=>{
+    const qty=eco[s.id]||0;
+    const total=Object.entries(eco).filter(([k])=>k!=='newParts').reduce((a,[,v])=>a+v,0)||1;
+    const p=Math.round(qty/total*100);
+    return`<tr>
       <td style="font-weight:${qty>0?'700':'400'}">${s.label}</td>
       <td style="color:var(--text-sub);font-size:12px;">${s.company||'（自社）'}</td>
       <td class="center mono" style="font-size:16px;font-weight:700;color:${qty>0?'var(--primary)':'var(--text-muted)'};">${qty}</td>
@@ -564,6 +800,7 @@ function renderFlow(){
       </div>
     </div>`;
 }
+
 
 
 /* ============================================================
@@ -3154,6 +3391,7 @@ if(typeof google!=='undefined'&&google.script){
 }else{
   _init(null);
 }
-</script>
-</body>
-</html>
+
+
+
+
