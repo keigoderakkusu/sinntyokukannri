@@ -1169,7 +1169,7 @@ function addLog(msg){
 
 function updateEcoBadge(){
   const total=Object.values(state.eco).reduce((s,eco)=>
-    s+Object.entries(eco).filter(([k])=>k!=='delivered'&&k!=='newParts').reduce((a,[,v])=>a+v,0),0);
+    s+Object.entries(eco||{}).filter(([k])=>k!=='delivered'&&k!=='newParts').reduce((a,[,v])=>a+v,0),0);
   const el=document.getElementById('eco-badge');
   if(el){el.textContent=total;el.style.display=total>0?'':'none';}
 }
@@ -2803,7 +2803,7 @@ function renderDashboard(){
   const waiting=MACHINES.filter(m=>state.statuses[m.id]==='量産前').length;
   const done=MACHINES.filter(m=>state.statuses[m.id]==='量産終了').length;
   const ecoTotal=Object.values(state.eco).reduce((s,eco)=>
-    s+Object.entries(eco).filter(([k])=>k!=='delivered'&&k!=='newParts').reduce((a,[,v])=>a+v,0),0);
+    s+Object.entries(eco||{}).filter(([k])=>k!=='delivered'&&k!=='newParts').reduce((a,[,v])=>a+v,0),0);
 
   const nearItems=[];
   MACHINES.forEach(m=>{
