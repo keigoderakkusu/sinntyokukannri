@@ -13,9 +13,19 @@ function doGet(e) {
     output.setMimeType(ContentService.MimeType.JSON);
     return output;
   }
-  return HtmlService.createHtmlOutputFromFile('index')
+  return HtmlService.createTemplateFromFile('index')
+    .evaluate()
     .setTitle('営業進捗管理システム')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * index.html から <?!= include('styles'); ?> のように呼び出し、
+ * styles.html / app.html を結合してレンダリングするためのヘルパー。
+ * （HTML Service はファイル分割時にこの仕組みが必要）
+ */
+function include(filename) {
+  return HtmlService.createHtmlOutputFromFile(filename).getContent();
 }
 
 /* ============================================================
