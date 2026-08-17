@@ -23,9 +23,8 @@ function doGet(e) {
     return ContentService.createTextOutput(js)
       .setMimeType(ContentService.MimeType.JAVASCRIPT);
   }
-  var template = HtmlService.createTemplateFromFile('index');
-  template.appJsUrl = ScriptApp.getService().getUrl() + '?action=appjs';
-  return template.evaluate()
+  return HtmlService.createTemplateFromFile('index')
+    .evaluate()
     .setTitle('営業進捗管理システム')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
