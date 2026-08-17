@@ -13,16 +13,27 @@ function doGet(e) {
     output.setMimeType(ContentService.MimeType.JSON);
     return output;
   }
-  return HtmlService.createTemplateFromFile('index')
-    .evaluate()
+  // メインJS(appjs.html, 約5000行)はHtmlServiceのiframeサンドボックス
+  // (postMessageでのチャンク転送)を経由すると大容量コンテンツで
+  // "Failed to execute 'write' on 'Document': Unexpected end of input"
+  // が発生することがあるため、通常の<script src>リクエストとして
+  // ContentServiceから直接配信することでサンドボックスを迂回する。
+  if (e && e.parameter && e.parameter.action === 'appjs') {
+    var js = HtmlService.createHtmlOutputFromFile('appjs').getContent();
+    return ContentService.createTextOutput(js)
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  var template = HtmlService.createTemplateFromFile('index');
+  template.appJsUrl = ScriptApp.getService().getUrl() + '?action=appjs';
+  return template.evaluate()
     .setTitle('営業進捗管理システム')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
 /**
  * index.html から <?!= include('styles'); ?> のように呼び出し、
- * styles.html / app.html を結合してレンダリングするためのヘルパー。
- * （HTML Service はファイル分割時にこの仕組みが必要）
+ * styles.html / app.html(エラー診断スクリプト)を結合してレンダリング
+ * するためのヘルパー。（HTML Service はファイル分割時にこの仕組みが必要）
  */
 function include(filename) {
   return HtmlService.createHtmlOutputFromFile(filename).getContent();
