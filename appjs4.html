@@ -1,0 +1,1267 @@
+<script>
+
+function _applySunDenshiNearTerm(nearTerm, sheetName){
+  const selects=document.querySelectorAll('.ntp-sel');
+  let count=0;
+  selects.forEach(sel=>{
+    const i=parseInt(sel.dataset.i);
+    const machineId=sel.value;
+    if(!machineId)return;
+    const r=nearTerm[i];
+    const m=MACHINES.find(x=>x.id===machineId);
+    if(!m||!r)return;
+
+    const qtyStr=_fmtQty(r.custSalesQty)||_fmtQty(r.sunSalesQty)||_fmtQty(r.targetQty);
+    if(qtyStr)m.prodQty=qtyStr;
+
+    if(r.salesDate){
+      if(!state.schedules[machineId])state.schedules[machineId]={};
+      state.schedules[machineId].prodShip=r.salesDate;
+    }
+
+    if(Object.keys(r.boards).length){
+      m.boards=Object.entries(r.boards).map(([cat,code])=>({type:cat+'基板',model:code}));
+    }
+
+    const importLine=`📊[生産計画取込 ${TODAY}] タイトル:${r.name} 販売時期:${r.salesDate||'—'} 部品集約:${r.aggDate||'—'} 台数:${qtyStr||'未定'}`;
+    const oldNotes=state.notes[machineId]||'';
+    const stripped=oldNotes.replace(/^📊\[生産計画取込[^\n]*\n?/,'');
+    state.notes[machineId]=importLine+(stripped?('\n'+stripped):'');
+    m.notes=state.notes[machineId];
+
+    count++;
+  });
+
+  if(count===0){showToast('⚠️ 反映先機種が選択されていません');return;}
+
+  state.config.lastSunDenshiImportAt=TODAY;
+  state.config.lastSunDenshiImportSheet=sheetName;
+  addLog(`📊 生産計画Excel取込（シート${sheetName}）: ${count}機種を更新`);
+  saveToGAS(`生産計画Excel取込: ${count}機種更新`);
+  renderPage(currentPage);
+  document.getElementById('sundenshi-nearterm-preview').innerHTML=`<div style="color:var(--success);font-weight:600;font-size:13px;padding:8px 0;">✅ ${count}機種を更新しました（シート: ${sheetName}）</div>`;
+  showToast(`✅ ${count}機種を最新の生産計画で更新しました`);
+}
+
+/* ============================================================
+   ハードウェア構成一覧表 取込
+   ※ 元PDF（【機種別】ハードウェア構成一覧表）はスプレッドシートの
+   画像化されたページで、行ラベルが選択可能テキストとして存在せず
+   セル高さも機種列ごとに微妙にズレるため、座標ベースの自動解析では
+   1行ズレなどの誤登録リスクがある。そのため：
+   ①同一レイアウトのExcelがあればラベル文字列検索方式で確実に取込む
+   ②PDFしかない場合はClaudeが目視で読み取り、検証済みの分だけ
+     _HW_SPEC_SAMPLE としてボタン一つで取込めるようにしてある。
+============================================================ */
+const HW_LABEL_CANDIDATES={
+  code:      ['機種コード','機種名','型式コード'],
+  title:     ['タイトル','機種名称','題名'],
+  person:    ['担当者','担当'],
+  mainBoard: ['主制御基板'],
+  cpu:       ['CPU'],
+  lcdBoard:  ['液晶制御基板'],
+  vdp:       ['VDP'],
+  cgRom:     ['CGROM'],
+  effectIfBoard:['演出IF基板'],
+  lcdIfBoard:['液晶IF基板'],
+  rtc:       ['RTC'],
+  sram:      ['SRAM'],
+  lcdSize:   ['液晶'],
+  mainLcd:   ['メイン液晶'],
+  updateDate:['更新⽇','更新日'],
+  subFixDate:['サブFIX'],
+  applyDate: ['申請⽇','申請日'],
+};
+
+function handleHardwareExcelImport(e){
+  const file=e.target.files[0];if(!file)return;
+  e.target.value='';
+  _loadXLSX(function(){
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      try{
+        const wb=XLSX.read(ev.target.result,{type:'binary',cellDates:true});
+        const sheetName=wb.SheetNames[0];
+        const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheetName],{header:1,defval:null,raw:false});
+        parseHardwareSpecRows(rows,sheetName);
+      }catch(err){showToast('⚠️ Excel読み込みエラー: '+err.message);}
+    };
+    reader.readAsBinaryString(file);
+  });
+}
+
+function parseHardwareSpecRows(rows,sheetName){
+  // ラベル行を、先頭数列のどこかに一致する文字列を探して検出（行位置や列位置の揺れに耐える）
+  const rowIdxOf=(labels)=>{
+    for(let r=0;r<rows.length;r++){
+      const row=rows[r]||[];
+      for(let c=0;c<Math.min(row.length,6);c++){
+        const v=row[c]!=null?String(row[c]).trim():'';
+        if(v&&labels.includes(v))return r;
+      }
+    }
+    return -1;
+  };
+  const rowIdx={};
+  Object.keys(HW_LABEL_CANDIDATES).forEach(k=>{rowIdx[k]=rowIdxOf(HW_LABEL_CANDIDATES[k]);});
+
+  if(rowIdx.code<0){showToast('⚠️ 「機種コード」の行が見つかりませんでした');return;}
+  const codeRow=rows[rowIdx.code]||[];
+  const startCol=codeRow.findIndex((v,i)=>i>=2&&v&&String(v).trim().length>0);
+  if(startCol<0){showToast('⚠️ 機種データ列が見つかりませんでした');return;}
+
+  const found=[];
+  for(let col=startCol;col<codeRow.length;col++){
+    const code=String(codeRow[col]||'').trim();if(!code)continue;
+    const rec={code,source:'excel:'+sheetName};
+    Object.keys(HW_LABEL_CANDIDATES).forEach(k=>{
+      if(k==='code')return;
+      rec[k]=rowIdx[k]>=0?String((rows[rowIdx[k]]||[])[col]||'').trim():'';
+    });
+    found.push(rec);
+  }
+  if(!found.length){showToast('⚠️ 機種データが見つかりませんでした');return;}
+  _showHardwareSpecPreview(found,sheetName);
+}
+
+function _showHardwareSpecPreview(records,sourceLabel){
+  const div=document.getElementById('hwspec-preview');
+  if(!div)return;
+  const rows=records.map((r,i)=>`
+    <tr>
+      <td style="font-size:11px;font-weight:700;">${r.code}</td>
+      <td style="font-size:11px;">${r.title||'—'}</td>
+      <td style="font-size:11px;">${r.mainBoard||'—'}</td>
+      <td style="font-size:11px;">${r.lcdBoard||'—'}</td>
+      <td style="font-size:11px;">${r.effectIfBoard||'—'}</td>
+      <td style="font-size:11px;">${r.lcdIfBoard||'—'}</td>
+    </tr>`).join('');
+  div.innerHTML=`
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 14px;margin:12px 0;font-size:11px;color:#1e40af;">
+      ℹ️ ${sourceLabel} から ${records.length}機種を検出しました。列のズレがないか確認の上、取込んでください。
+    </div>
+    <div style="overflow:auto;max-height:320px;border:1px solid var(--border);border-radius:6px;">
+      <table style="font-size:12px;"><thead><tr style="position:sticky;top:0;background:#f8fafc;">
+        <th>機種コード</th><th>タイトル</th><th>主制御基板</th><th>液晶制御基板</th><th>演出IF基板</th><th>液晶IF基板</th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>
+    <button class="btn btn-primary btn-sm" style="margin-top:10px;" onclick='_applyHardwareSpecs(${JSON.stringify(records).replace(/'/g,"&#39;")})'>✅ この内容で取込</button>
+    <button class="btn btn-sm" style="margin-left:8px;margin-top:10px;" onclick="document.getElementById('hwspec-preview').innerHTML=''">キャンセル</button>`;
+}
+
+function _applyHardwareSpecs(records){
+  records.forEach(r=>{
+    state.hardwareSpecs[r.code]={...r};
+    const mid=_guessMachineId(r.code);
+    if(mid){
+      const doc=_getBoardDoc(mid);
+      if(r.mainBoard&&!doc.A.model)doc.A.model=r.mainBoard;
+      if(r.lcdBoard&&!doc.B.model)doc.B.model=r.lcdBoard;
+    }
+  });
+  addLog(`⚙️ ハードウェア構成表取込: ${records.length}機種`);
+  saveToGAS(`ハードウェア構成表取込: ${records.length}機種`);
+  const div=document.getElementById('hwspec-preview');
+  if(div)div.innerHTML=`<div style="color:var(--success);font-weight:600;font-size:13px;padding:8px 0;">✅ ${records.length}機種のハードウェア構成を取込みました</div>`;
+  showToast(`✅ ${records.length}機種を取込みました`);
+  if(currentPage==='parts')renderParts();
+}
+
+/* Claudeが目視でPDFを読み取り、機種コードの相互参照（既存MACHINESの基板情報）
+   と突き合わせて値が一致することを確認できた分のみを収録した検証済みサンプル。
+   出典: 【機種別】ハードウェア構成一覧表(ぱちんこ)_260701.pdf 4ページ目 */
+const HW_SPEC_SAMPLE=[
+  {code:'C46', title:'地獄少女Ver', mainBoard:'M2401A(グループ間共通)', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'64G(HSS)', effectIfBoard:'E2101B', lcdIfBoard:'DE2101A1', rtc:'○', sram:'○', lcdSize:'19inch', updateDate:'2024/10/30'},
+  {code:'C46C', title:'地獄少女Ver', mainBoard:'M2401A(グループ間共通)', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'64G(HSS)', effectIfBoard:'E2101B', lcdIfBoard:'DE2101A1', rtc:'○', sram:'○', lcdSize:'19inch', updateDate:'2026/3/11'},
+  {code:'C47', title:'貞子2', mainBoard:'M2401A(グループ間共通)', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'64G(HSS)', effectIfBoard:'E2101B', lcdIfBoard:'DE2101A1', rtc:'○', sram:'○', lcdSize:'19inch', updateDate:'2026/4/8'},
+  {code:'A87', title:'とある禁書目録３', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'320G(HSS)', effectIfBoard:'E2501B', lcdIfBoard:'DE2502A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/3/11'},
+  {code:'A88', title:'FT4', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', lcdIfBoard:'DE1802A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/2/3'},
+  {code:'D62', title:'アリア6', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', lcdIfBoard:'DE2502A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/5/20'},
+  {code:'A89', title:'片田舎のおっさん', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', lcdIfBoard:'DE2502A or DE2101A1 or DE1802A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/7/1'},
+  {code:'D63', title:'とある超電磁砲3', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'320G(HSS)', effectIfBoard:'E2501B', lcdIfBoard:'DE2502A or DE2101A1 or DE1802A', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2025/8/5'},
+  {code:'A90', title:'ダンまち', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/5/27'},
+  {code:'A91', title:'真リング', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'D2101A', vdp:'AG5', cgRom:'124G(HSS)', effectIfBoard:'E2503B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/5/22'},
+  {code:'C48', title:'恋姫', mainBoard:'M2601A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'64G(HSS)', effectIfBoard:'E2501B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/5/20'},
+  {code:'D64', title:'女神のカフェテラス２', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'124G(HSS)', effectIfBoard:'E2501B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/6/16'},
+  {code:'D65', title:'魔法科', mainBoard:'M2503A', cpu:'IDNAC8703', lcdBoard:'SNB52163A-00', vdp:'AG6R', cgRom:'124G or 320G(HSS)', effectIfBoard:'E2501B', rtc:'×', sram:'○', lcdSize:'19inch', updateDate:'2026/6/10'},
+].map(r=>({...r, series:'PFK25/PFK30', person:'', mainLcd:'LQ190E1LW61', source:'PDF目視取込(260701, 検証済)'}));
+
+function importHardwareSpecSample(){
+  _showHardwareSpecPreview(HW_SPEC_SAMPLE,'ハードウェア構成一覧表(ぱちんこ)_260701 — 検証済みサンプル13機種');
+}
+
+/* ============================================================
+   生産計画PDF取込（長納期化部品対応用）
+============================================================ */
+async function handleProdPlanPDF(event){
+  const file=event.target.files[0];
+  if(!file)return;
+  event.target.value='';
+  const prev=document.getElementById('prodplan-preview');
+  if(prev)prev.innerHTML='<div style="padding:12px;color:var(--text-sub);font-size:12px;">📄 PDF解析中...</div>';
+
+  if(typeof pdfjsLib==='undefined'){
+    try{
+      await new Promise((resolve,reject)=>{
+        const s=document.createElement('script');
+        s.src='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
+        s.onload=resolve; s.onerror=reject;
+        document.head.appendChild(s);
+      });
+    }catch(e){
+      if(prev)prev.innerHTML='<div style="color:var(--danger);font-size:12px;">⚠️ pdf.jsの読み込みに失敗しました</div>';
+      return;
+    }
+  }
+  pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+
+  try{
+    const buf=await file.arrayBuffer();
+    const pdf=await pdfjsLib.getDocument({data:buf}).promise;
+    const page=await pdf.getPage(1);
+    const tc=await page.getTextContent();
+
+    const items=tc.items.map(it=>({
+      text:it.str,
+      x:Math.round(it.transform[4]*10)/10,
+      y:Math.round(it.transform[5]*10)/10,
+      w:it.width||0,
+    })).filter(i=>i.text.trim());
+
+    const parsed=_parseProdPlanItems(items);
+    if(!parsed.length){
+      if(prev)prev.innerHTML='<div style="color:var(--danger);font-size:12px;">⚠️ 生産計画の表構造を検出できませんでした</div>';
+      return;
+    }
+    _showProdPlanPreview(parsed, prev, file.name);
+  }catch(err){
+    if(prev)prev.innerHTML=`<div style="color:var(--danger);font-size:12px;">⚠️ PDF読み取りエラー: ${err.message}</div>`;
+  }
+}
+
+function _parseProdPlanItems(items){
+  const yGroups={};
+  items.forEach(it=>{
+    const yKey=Math.round(it.y/4)*4;
+    if(!yGroups[yKey])yGroups[yKey]=[];
+    yGroups[yKey].push(it);
+  });
+
+  const rows=Object.entries(yGroups)
+    .sort(([a],[b])=>Number(b)-Number(a))
+    .map(([y,its])=>({
+      y:Number(y),
+      items:its.sort((a,b)=>a.x-b.x),
+      text:its.sort((a,b)=>a.x-b.x).map(i=>i.text.trim()).join(' '),
+    }));
+
+  const sections=[];
+  let curSection=null;
+
+  for(let ri=0;ri<rows.length;ri++){
+    const row=rows[ri];
+    const txt=row.text;
+
+    if(/(\d{2})期/.test(txt)){
+      const m=txt.match(/(\d{2})期/);
+      curSection={period:m[1]+'期', year:0, machines:[], rows:[]};
+      sections.push(curSection);
+    }
+
+    if(curSection){
+      // Detect fiscal year from nearby "2026年" etc
+      const ym=txt.match(/(20\d{2})年/);
+      if(ym&&!curSection.year)curSection.year=parseInt(ym[1]);
+      curSection.rows.push(row);
+    }
+  }
+
+  const allMachines=[];
+
+  sections.forEach(sec=>{
+    const baseYear=sec.year||2026;
+    let machineRow=null, dateRow=null, qtyRow=null, salesRow=null, brandRow=null, frameRow=null, honRow=null;
+
+    sec.rows.forEach(row=>{
+      const t=row.text;
+      if(/^機種\s/.test(t)||row.items.some(i=>i.text.trim()==='機種'))machineRow=row;
+      if(t.includes('納品日'))dateRow=row;
+      if(t.includes('調達目標台数'))qtyRow=row;
+      if(t.includes('内：本体')||t.includes('内:本体'))honRow=row;
+      if(t.includes('販売台数'))salesRow=row;
+      if(row.items.some(i=>i.text.trim()==='ブランド'))brandRow=row;
+      if(t.includes('枠／筐体')||t.includes('枠/筐体'))frameRow=row;
+    });
+
+    if(!machineRow)return;
+
+    const mItems=machineRow.items.filter(i=>{
+      const t=i.text.trim();
+      return t&&t!=='機種'&&t.length>=2;
+    });
+
+    const dItems=dateRow?dateRow.items.filter(i=>/^\d+\/[上中下]/.test(i.text.trim())):[];
+
+    mItems.forEach((mi,idx)=>{
+      const rawName=mi.text.trim();
+      const mx=mi.x;
+
+      const _findVal=(row)=>{
+        if(!row)return'';
+        let best=null,bestDist=999;
+        row.items.forEach(it=>{
+          const d=Math.abs(it.x-mx);
+          if(d<bestDist&&it.text.trim()!==''){
+            const t=it.text.trim();
+            if(!/^(調達|販売|内|枠|ブランド|機種|納品|合計)/.test(t)){
+              bestDist=d;best=it.text.trim();
+            }
+          }
+        });
+        return(bestDist<60)?best||'':'';
+      };
+
+      let deliveryTiming='';
+      if(dItems.length){
+        let bestD=null,bestDD=999;
+        dItems.forEach(di=>{
+          const d=Math.abs(di.x-mx);
+          if(d<bestDD){bestDD=d;bestD=di.text.trim();}
+        });
+        if(bestDD<60)deliveryTiming=bestD;
+      }
+
+      let qty=_findVal(qtyRow).replace(/,/g,'');
+      let salesQty=_findVal(salesRow).replace(/,/g,'');
+      const brand=_findVal(brandRow);
+      const frame=_findVal(frameRow);
+
+      const id=_normalizeMachineId(rawName);
+      const type=rawName.startsWith('e:')?'スマートパチンコ':rawName.startsWith('L:')?'スマートパチスロ':rawName.startsWith('P:')?'パチンコP機':'';
+
+      let deliveryDate='';
+      if(deliveryTiming){
+        const dm=deliveryTiming.match(/^(\d{1,2})\/([上中下])/);
+        if(dm){
+          let month=parseInt(dm[1]);
+          let day=dm[2]==='上'?5:dm[2]==='中'?15:25;
+          let year=month>=4?baseYear:baseYear+1;
+          deliveryDate=`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+        }
+      }
+
+      if(qty&&/^\d+$/.test(qty))qty=Number(qty).toLocaleString()+'台';
+      if(salesQty&&/^\d+$/.test(salesQty))salesQty=Number(salesQty).toLocaleString()+'台';
+
+      allMachines.push({
+        rawName, id, type, period:sec.period, baseYear,
+        deliveryDate, deliveryTiming,
+        qty:qty||'', salesQty:salesQty||'',
+        brand:brand||'', frame:frame||'',
+      });
+    });
+  });
+
+  return allMachines;
+}
+
+function _normalizeMachineId(raw){
+  let s=raw.replace(/^[eLPp]:/,'').trim();
+  s=s.replace(/ｻﾌﾞ$/,'B').replace(/サブ$/,'B');
+  s=s.replace(/再々再々$/,'').replace(/再×\d+$/,'').replace(/再々$/,'').replace(/再$/,'');
+  return s;
+}
+
+function _showProdPlanPreview(machines, div, fileName){
+  const existing=machines.filter(m=>MACHINES.find(x=>x.id===m.id));
+  const future=machines.filter(m=>!MACHINES.find(x=>x.id===m.id));
+
+  let html=`<div style="font-size:13px;font-weight:700;margin-bottom:10px;">📄 ${fileName} — ${machines.length}機種検出</div>`;
+
+  if(existing.length){
+    html+=`<div style="margin-bottom:6px;"><span style="background:var(--primary);color:#fff;border-radius:4px;font-size:10px;padding:2px 8px;">既存機種 ${existing.length}件</span></div>`;
+    html+=`<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px;">
+      <tr style="background:#eff6ff;"><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">PDF名</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">→ 機種ID</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">期</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">納品時期</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">台数</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">ブランド</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">枠</th></tr>
+      ${existing.map(m=>`<tr>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.rawName}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;font-weight:700;">${m.id}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.period}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.deliveryTiming||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.qty||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.brand||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.frame||'—'}</td>
+      </tr>`).join('')}
+    </table>`;
+  }
+
+  if(future.length){
+    html+=`<div style="margin-bottom:6px;"><span style="background:var(--success);color:#fff;border-radius:4px;font-size:10px;padding:2px 8px;">将来機種 ${future.length}件（新規追加）</span></div>`;
+    html+=`<table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:14px;">
+      <tr style="background:#f0fdf4;"><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">機種名</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">ID</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">種別</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">期</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">納品時期</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">台数</th><th style="padding:4px 8px;text-align:left;border-bottom:1px solid #d1d5db;">枠</th></tr>
+      ${future.map(m=>`<tr>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.rawName}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;font-weight:700;">${m.id}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.type||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.period}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.deliveryTiming||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.qty||'—'}</td>
+        <td style="padding:4px 8px;border-bottom:1px solid #f0f0f0;">${m.frame||'—'}</td>
+      </tr>`).join('')}
+    </table>`;
+  }
+
+  html+=`<div style="display:flex;gap:8px;margin-top:10px;">
+    <button class="btn btn-primary btn-sm" onclick="_applyProdPlan()">✅ 取込を実行</button>
+    <button class="btn btn-sm" onclick="document.getElementById('prodplan-preview').innerHTML=''">キャンセル</button>
+  </div>`;
+
+  div.innerHTML=html;
+  window._pendingProdPlan=machines;
+}
+
+function _applyProdPlan(){
+  const machines=window._pendingProdPlan;
+  if(!machines||!machines.length){showToast('⚠️ 取込データがありません');return;}
+
+  let updatedCount=0, addedCount=0, futureCount=0;
+
+  machines.forEach(m=>{
+    const existing=MACHINES.find(x=>x.id===m.id);
+    if(existing){
+      // Update existing machine
+      const changes=[];
+      if(m.qty){
+        const qtyClean=m.qty.replace(/台$/,'');
+        if(qtyClean!==existing.prodQty.replace(/台$/,'')){
+          existing.prodQty=m.qty; changes.push('台数');
+        }
+      }
+      if(m.deliveryDate&&m.deliveryDate!==existing.prodShip){
+        existing.prodShip=m.deliveryDate;
+        if(state.schedules[m.id])state.schedules[m.id].prodShip=m.deliveryDate;
+        changes.push('出荷日');
+      }
+      if(m.brand&&!existing.compliance.includes(m.brand)){
+        const ex=_getExtra(m.id);
+        ex.brand=m.brand; changes.push('ブランド');
+      }
+      if(m.frame){
+        const ex=_getExtra(m.id);
+        ex.frame=m.frame; changes.push('枠');
+      }
+      if(changes.length){
+        addLog(`📄 PDF取込: ${m.id} — ${changes.join(', ')}を更新`);
+        updatedCount++;
+      }
+    }else{
+      // Add as future model if not already exists
+      const eid=state.futureModels.find(f=>f.code===m.id||f.code===m.rawName);
+      if(eid){
+        // Update existing future model
+        if(m.qty)eid.prodQtyActual=m.qty;
+        if(m.deliveryDate)eid.salesDate=m.deliveryDate;
+        if(m.frame)eid.prodMemo=(eid.prodMemo?eid.prodMemo+' / ':'')+'枠:'+m.frame;
+        futureCount++;
+      }else{
+        state.futureModels.push({
+          id:'FM-'+Date.now()+'-'+Math.random().toString(36).substr(2,4),
+          code:m.id,
+          name:m.rawName,
+          salesDate:m.deliveryDate||'',
+          complianceDate:'', complianceStatus:'',
+          code12D:'',
+          productionPlanDate:'', materialDate:'', mountingDate:'',
+          hallDate:'', deliveryDate:m.deliveryDate||'',
+          sampleDeliveryDate:'', sampleBoard:'', sampleBoardType:'',
+          prodFirstImplDate:'', prodFirstAssyDate:'', prodFirstDeliveryDate:'',
+          prodQtyActual:m.qty||'', prodRomType:'', prodMemo:
+            [m.type, m.brand?'ブランド:'+m.brand:'', m.frame?'枠:'+m.frame:'', m.period].filter(Boolean).join(' / '),
+          memo:'生産計画PDF取込 ('+m.period+')',
+        });
+        addedCount++;
+      }
+    }
+  });
+
+  saveToGAS();
+  const msg=`✅ PDF取込完了: 既存更新 ${updatedCount}件、将来機種追加 ${addedCount}件${futureCount?`、将来機種更新 ${futureCount}件`:''}`;
+  showToast(msg);
+  addLog(`📄 生産計画PDF取込: ${machines.length}機種 (更新${updatedCount}/追加${addedCount})`);
+  const div=document.getElementById('prodplan-preview');
+  if(div)div.innerHTML=`<div style="padding:14px;color:var(--success);font-size:13px;font-weight:600;">${msg}</div>`;
+  renderAdmin(); renderDashboard();
+  if(addedCount||futureCount)renderFuturePage();
+  window._pendingProdPlan=null;
+}
+
+/* ============================================================
+   ROUTER
+============================================================ */
+/* ============================================================
+   RENDER: 部品管理（機種→基板構成A/B/C→仕様書/PCB見積 + 品番単位の共有部品在庫・BOM）
+============================================================ */
+function _getBoardDoc(machineId){
+  if(!state.boardDocs[machineId]){
+    state.boardDocs[machineId]={assemblyQuoteUrl:''};
+    BOARD_TYPE_DEFS.forEach(bt=>{state.boardDocs[machineId][bt.key]={model:'',specUrl:'',pcbUrl:''};});
+  }
+  BOARD_TYPE_DEFS.forEach(bt=>{if(!state.boardDocs[machineId][bt.key])state.boardDocs[machineId][bt.key]={model:'',specUrl:'',pcbUrl:''};});
+  return state.boardDocs[machineId];
+}
+function _getPartsStock(model){
+  if(!model)return null;
+  if(!state.partsStock[model]){
+    state.partsStock[model]={bom:[],stock:{new:0,reuse:0,eco:0},price:{new:0,reuse:0,eco:0},category:'',machineType:'',spec:'',memo:''};
+  }
+  const ps=state.partsStock[model];
+  if(ps.category===undefined)ps.category='';
+  if(ps.machineType===undefined)ps.machineType='';
+  if(ps.spec===undefined)ps.spec='';
+  if(ps.memo===undefined)ps.memo='';
+  return ps;
+}
+function _getBoardDriveFiles(model){
+  if(!state.boardDriveFiles[model])state.boardDriveFiles[model]=[];
+  return state.boardDriveFiles[model];
+}
+
+function updateBoardMasterField(model,field,value){
+  const ps=_getPartsStock(model);
+  ps[field]=value;
+  saveToGAS();
+}
+
+function updateBoardDoc(machineId,key,field,value){
+  const doc=_getBoardDoc(machineId);
+  if(key)doc[key][field]=value;
+  else doc[field]=value;
+  saveToGAS();
+  if(field==='model')renderParts();
+}
+
+function updatePartsStockField(model,group,sub,value){
+  const ps=_getPartsStock(model);
+  if(!ps)return;
+  ps[group][sub]=parseFloat(value)||0;
+  saveToGAS();
+  renderParts();
+}
+
+function addBomRow(model){
+  const ps=_getPartsStock(model);
+  if(!ps)return;
+  ps.bom.push({id:'bom-'+Date.now()+'-'+Math.floor(Math.random()*1000),partNo:'',name:'',qty:0,unitPrice:0});
+  saveToGAS();
+  renderParts();
+}
+function updateBomRow(model,rowId,field,value){
+  const ps=_getPartsStock(model);
+  if(!ps)return;
+  const row=ps.bom.find(r=>r.id===rowId);
+  if(!row)return;
+  row[field]=(field==='qty'||field==='unitPrice')?(parseFloat(value)||0):value;
+  saveToGAS();
+}
+function removeBomRow(model,rowId){
+  const ps=_getPartsStock(model);
+  if(!ps)return;
+  ps.bom=ps.bom.filter(r=>r.id!==rowId);
+  saveToGAS();
+  renderParts();
+}
+
+function _esc(s){return String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+function _hit(text,term){return term&&String(text||'').toLowerCase().includes(term);}
+
+const STOCK_DEFS=[
+  {key:'new',   num:'(1)',label:'新品在庫',      color:'#eff6ff'},
+  {key:'reuse', num:'(2)',label:'リユース在庫（中古だが新品利用扱い）',color:'var(--primary-light)'},
+  {key:'eco',   num:'(3)',label:'エコ在庫（中古品）',color:'#fffbeb'},
+];
+
+function _bomLeafHtml(model,term){
+  const ps=_getPartsStock(model);
+  const bomTotal=ps.bom.reduce((s,r)=>s+(r.qty*r.unitPrice),0);
+  const bomRows=ps.bom.map(r=>`
+    <tr>
+      <td><input value="${_esc(r.partNo)}" onchange="updateBomRow('${model}','${r.id}','partNo',this.value)" style="width:100px;font-size:11px;padding:2px 4px;${_hit(r.partNo,term)?'background:#fef9c3;':''}"></td>
+      <td><input value="${_esc(r.name)}" onchange="updateBomRow('${model}','${r.id}','name',this.value)" style="width:140px;font-size:11px;padding:2px 4px;${_hit(r.name,term)?'background:#fef9c3;':''}"></td>
+      <td><input type="number" value="${r.qty}" onchange="updateBomRow('${model}','${r.id}','qty',this.value)" style="width:60px;font-size:11px;padding:2px 4px;text-align:right;"></td>
+      <td><input type="number" value="${r.unitPrice}" onchange="updateBomRow('${model}','${r.id}','unitPrice',this.value)" style="width:80px;font-size:11px;padding:2px 4px;text-align:right;">円</td>
+      <td style="font-size:11px;text-align:right;">¥${(r.qty*r.unitPrice).toLocaleString('ja-JP')}</td>
+      <td><button class="btn btn-sm" style="padding:1px 6px;color:var(--danger);" onclick="removeBomRow('${model}','${r.id}')">✕</button></td>
+    </tr>`).join('');
+  return`
+    <button class="btn btn-sm" onclick="addBomRow('${model}')">＋ 部品行追加</button>
+    ${ps.bom.length?`<table style="font-size:11px;margin-top:8px;"><thead><tr><th>品番</th><th>部品名</th><th>数量</th><th>単価</th><th>金額</th><th></th></tr></thead><tbody>${bomRows}</tbody></table>
+      <div style="text-align:right;font-size:12px;font-weight:700;margin-top:6px;">BOM合計: ¥${bomTotal.toLocaleString('ja-JP')}</div>`
+      :`<div style="color:var(--text-muted);font-size:11px;margin-top:8px;">部品行がありません。</div>`}`;
+}
+
+function _stockLeafHtml(model,key,term){
+  const ps=_getPartsStock(model);
+  return`
+    <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+      <div>
+        <div style="font-size:10px;color:var(--text-muted);">在庫数</div>
+        <input type="number" value="${ps.stock[key]}" onchange="updatePartsStockField('${model}','stock','${key}',this.value)"
+          style="width:90px;font-size:18px;font-weight:700;text-align:center;border:1px solid var(--border);border-radius:4px;padding:4px;">
+        <span style="font-size:11px;color:var(--text-muted);">個</span>
+      </div>
+      <div>
+        <div style="font-size:10px;color:var(--text-muted);">単価</div>
+        <input type="number" value="${ps.price[key]}" onchange="updatePartsStockField('${model}','price','${key}',this.value)"
+          style="width:90px;font-size:14px;text-align:right;border:1px solid var(--border);border-radius:4px;padding:4px;">
+        <span style="font-size:11px;color:var(--text-muted);">円</span>
+      </div>
+      <div style="font-size:11px;color:var(--text-sub);">評価額: ¥${(ps.stock[key]*ps.price[key]).toLocaleString('ja-JP')}</div>
+    </div>`;
+}
+
+function _urlLeafHtml(machine,key,field,label,value,term){
+  const hit=_hit(value,term);
+  return`
+    <div style="display:flex;gap:6px;align-items:center;">
+      <input value="${_esc(value)}" placeholder="Google Drive / SharePoint URL" onchange="updateBoardDoc('${machine}',${key?`'${key}'`:'null'},'${field}',this.value)"
+        style="flex:1;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;${hit?'background:#fef9c3;':''}">
+      ${value?`<a class="btn btn-sm" href="${_esc(value)}" target="_blank">開く</a>`:''}
+    </div>`;
+}
+
+function _treeLeaf(id,summary,bodyHtml,open){
+  return`<details${open?' open':''} style="margin:4px 0 4px 14px;">
+    <summary style="cursor:pointer;font-size:12px;font-weight:600;padding:4px 0;">${summary}</summary>
+    <div style="padding:8px 0 8px 16px;border-left:2px solid var(--border);margin-left:4px;">${bodyHtml}</div>
+  </details>`;
+}
+function _treeBranch(summary,innerHtml,open){
+  return`<details${open?' open':''} style="margin:4px 0 4px 14px;">
+    <summary style="cursor:pointer;font-size:12.5px;font-weight:700;padding:4px 0;">${summary}</summary>
+    <div style="padding:2px 0 2px 10px;border-left:2px solid var(--border);margin-left:4px;">${innerHtml}</div>
+  </details>`;
+}
+
+function _boardTypeTree(machine,bt,term){
+  const doc=_getBoardDoc(machine);
+  const b=doc[bt.key];
+  const model=b.model;
+  const modelHit=_hit(model,term);
+  const stockLeaves=STOCK_DEFS.map(sd=>
+    _treeLeaf(`${bt.key}-3-2-${sd.key}`,`${sd.num} ${sd.label}`,
+      model?_stockLeafHtml(model,sd.key,term):`<div style="color:var(--text-muted);font-size:11px;">品番未設定のため在庫管理できません（${bt.key}-2で品番を入力してください）</div>`,
+      false)
+  ).join('');
+
+  const usedPartsBranch=_treeBranch(`${bt.key}-3_使用部品${model?` <span style="font-weight:400;color:var(--text-sub);">（品番: <span style="${modelHit?'background:#fef9c3;':''}">${_esc(model)}</span>）</span>`:''}`,
+    _treeLeaf(`${bt.key}-3-1`,`${bt.key}-3-1_総合部品表（BOM）`,
+      model?_bomLeafHtml(model,term):`<div style="color:var(--text-muted);font-size:11px;">品番未設定のためBOM管理できません</div>`,false)
+    +_treeBranch(`${bt.key}-3-2_部品在庫・価格管理`,stockLeaves,false)
+  ,false);
+
+  const inner=
+    _treeLeaf(`${bt.key}-1`,`${bt.key}-1_基板仕様書`,_urlLeafHtml(machine,bt.key,'specUrl','基板仕様書',b.specUrl,term),false)
+    +_treeLeaf(`${bt.key}-2`,`${bt.key}-2_仕掛基板（PCB見積書含む）`,
+        `<div style="margin-bottom:8px;"><label style="font-size:11px;color:var(--text-sub);display:block;margin-bottom:3px;">基板品番</label>
+         <input value="${_esc(model)}" placeholder="例: M2401A" onchange="updateBoardDoc('${machine}','${bt.key}','model',this.value)" style="width:220px;padding:6px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;${modelHit?'background:#fef9c3;':''}"></div>
+         <label style="font-size:11px;color:var(--text-sub);display:block;margin-bottom:3px;">PCB見積書 URL</label>
+         ${_urlLeafHtml(machine,bt.key,'pcbUrl','PCB見積書',b.pcbUrl,term)}`,false)
+    +usedPartsBranch;
+
+  return _treeBranch(`${bt.key}_${bt.label}`,inner,false);
+}
+
+function _machineMatches(machine,term){
+  if(!term)return true;
+  if(_hit(machine,term))return true;
+  const doc=_getBoardDoc(machine);
+  if(_hit(doc.assemblyQuoteUrl,term))return true;
+  const hw=_hwSpecFor(machine);
+  if(hw&&['code','title','mainBoard','cpu','lcdBoard','effectIfBoard','lcdIfBoard'].some(k=>_hit(hw[k],term)))return true;
+  return BOARD_TYPE_DEFS.some(bt=>{
+    const b=doc[bt.key];
+    if(_hit(b.model,term)||_hit(b.specUrl,term)||_hit(b.pcbUrl,term))return true;
+    if(!b.model)return false;
+    const ps=state.partsStock[b.model];
+    if(!ps)return false;
+    return ps.bom.some(r=>_hit(r.partNo,term)||_hit(r.name,term));
+  });
+}
+
+function _hwSpecFor(machineId){
+  if(state.hardwareSpecs[machineId])return state.hardwareSpecs[machineId];
+  const found=Object.values(state.hardwareSpecs).find(r=>_guessMachineId(r.code)===machineId);
+  return found||null;
+}
+
+function _hwSpecLeafHtml(hw,term){
+  if(!hw)return`<div style="color:var(--text-muted);font-size:11px;">未取込です。管理コンソール →「⚙️ ハードウェア構成一覧表 取込」から取り込んでください。</div>`;
+  const rows=[
+    ['機種コード',hw.code],['タイトル',hw.title],['主制御基板',hw.mainBoard],['CPU',hw.cpu],
+    ['液晶制御基板',hw.lcdBoard],['VDP',hw.vdp],['CGROM',hw.cgRom],['演出IF基板',hw.effectIfBoard],
+    ['液晶IF基板',hw.lcdIfBoard],['RTC',hw.rtc],['SRAM',hw.sram],['液晶',hw.lcdSize],
+    ['メイン液晶',hw.mainLcd],['更新日',hw.updateDate],['サブFIX',hw.subFixDate],['申請日',hw.applyDate],
+  ].filter(([,v])=>v);
+  const cellsHtml=rows.map(([k,v])=>`
+    <div style="background:#f8fafc;border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-width:120px;">
+      <div style="font-size:10px;color:var(--text-muted);">${k}</div>
+      <div style="font-size:12px;font-weight:600;${_hit(v,term)?'background:#fef9c3;':''}">${_esc(v)}</div>
+    </div>`).join('');
+  return`<div style="display:flex;flex-wrap:wrap;gap:6px;">${cellsHtml}</div>
+    <div style="margin-top:8px;font-size:10px;color:var(--text-muted);">出典: ${_esc(hw.source||'—')}</div>`;
+}
+
+function renderParts(){
+  const searchEl=document.getElementById('parts-search');
+  const term=(searchEl?searchEl.value:'').trim().toLowerCase();
+  const cursorPos=searchEl?searchEl.selectionStart:null;
+  const hadFocus=document.activeElement===searchEl;
+
+  const machines=MACHINES.filter(m=>_machineMatches(m.id,term));
+
+  const treeHtml=machines.map(m=>{
+    const doc=_getBoardDoc(m.id);
+    const openMachine=!!term; // 検索中は一致した機種を展開
+    const hw=_hwSpecFor(m.id);
+    const inner=
+      _treeLeaf('01',`01_組立費見積書`,_urlLeafHtml(m.id,null,'assemblyQuoteUrl','組立費見積書',doc.assemblyQuoteUrl,term),false)
+      +_treeLeaf('HW',`⚙️ ハードウェア構成一覧表データ${hw?'':' <span style=\"color:var(--text-muted);font-weight:400;\">（未取込）</span>'}`,_hwSpecLeafHtml(hw,term),false)
+      +_treeBranch(`02_各基板構成`,BOARD_TYPE_DEFS.map(bt=>_boardTypeTree(m.id,bt,term)).join(''),!!term);
+    const headerHtml=`🎮 機種 ${_esc(m.id)} <button class="btn btn-sm" style="margin-left:8px;font-weight:400;" onclick="event.stopPropagation();event.preventDefault();openDetailModal('machine','${m.id}')">📇 図鑑で見る</button>`;
+    return _treeBranch(headerHtml,inner,openMachine);
+  }).join('');
+
+  document.getElementById('page-parts').innerHTML=`
+    <div class="page-heading"><div><h2>🧩 機種管理</h2><p>機種 → 01_組立費見積書 / 02_各基板構成（A主基板・B液晶制御基板・C液晶演出基板）→ 仕様書・PCB見積・BOM・部品在庫（新品/リユース/エコ）</p></div></div>
+    <div class="filter-bar">
+      <input id="parts-search" type="text" placeholder="🔍 機種・品番・部品名・URLで検索" value="${_esc(term)}" oninput="renderParts()"
+        style="flex:1;min-width:240px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;">
+      ${term?`<span style="font-size:12px;color:var(--text-sub);">${machines.length}件 一致</span>`:''}
+    </div>
+    <div class="table-wrap">
+      <div style="padding:14px;">
+        ${treeHtml||`<div style="color:var(--text-muted);font-size:13px;padding:20px;text-align:center;">一致する機種がありません。</div>`}
+      </div>
+    </div>`;
+
+  const newSearchEl=document.getElementById('parts-search');
+  if(newSearchEl&&hadFocus){
+    newSearchEl.focus();
+    if(cursorPos!=null)newSearchEl.setSelectionRange(cursorPos,cursorPos);
+  }
+}
+
+/* ============================================================
+   RENDER: 基板管理（基板マスタ — カテゴリ別・パチンコ/スロット・仕様・価格・使用部品）
+============================================================ */
+function addBoardMaster(category){
+  const model=(prompt(`追加する基板品番を入力してください（${BOARD_CATEGORY_DEFS.find(c=>c.key===category).label}）`)||'').trim();
+  if(!model)return;
+  _getPartsStock(model).category=category;
+  saveToGAS();
+  renderBoards();
+}
+function deleteBoardMaster(model){
+  if(!confirm(`基板「${model}」の登録を削除しますか？（在庫・BOMも削除されます）`))return;
+  delete state.partsStock[model];
+  addLog(`基板マスタ削除: ${model}`);
+  saveToGAS();
+  renderBoards();
+}
+
+function _boardMasterRow(model,term){
+  const ps=_getPartsStock(model);
+  const bomCount=ps.bom.length;
+  const bomTotal=ps.bom.reduce((s,r)=>s+(r.qty*r.unitPrice),0);
+  return`
+    <div class="table-wrap" style="margin-bottom:10px;">
+      <div class="table-toolbar">
+        <h2 style="${_hit(model,term)?'background:#fef9c3;':''}">${_esc(model)}</h2>
+        <div>
+          <button class="btn btn-sm" onclick="openDetailModal('board','${model}')">📇 図鑑で見る</button>
+          <button class="btn btn-sm" style="color:var(--danger);" onclick="deleteBoardMaster('${model}')">削除</button>
+        </div>
+      </div>
+      <div style="padding:12px 14px;display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start;">
+        <div>
+          <label style="font-size:10px;color:var(--text-sub);display:block;">用途</label>
+          <select onchange="updateBoardMasterField('${model}','machineType',this.value)" style="padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+            ${MACHINE_TYPE_OPTIONS.map(o=>`<option value="${o}"${ps.machineType===o?' selected':''}>${o||'（未設定）'}</option>`).join('')}
+          </select>
+        </div>
+        <div style="flex:1;min-width:220px;">
+          <label style="font-size:10px;color:var(--text-sub);display:block;">仕様・概要</label>
+          <input value="${_esc(ps.spec)}" placeholder="例: VDP AG5 / CGROM 64G(HSS)" onchange="updateBoardMasterField('${model}','spec',this.value)"
+            style="width:100%;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;${_hit(ps.spec,term)?'background:#fef9c3;':''}">
+        </div>
+        <div>
+          <label style="font-size:10px;color:var(--text-sub);display:block;">価格（新品単価）</label>
+          <input type="number" value="${ps.price.new}" onchange="updatePartsStockField('${model}','price','new',this.value)"
+            style="width:100px;padding:5px 8px;border:1px solid var(--border);border-radius:6px;font-size:12px;text-align:right;">円
+        </div>
+        <div style="display:flex;gap:8px;">
+          <div style="text-align:center;"><div style="font-size:10px;color:var(--text-sub);">新品在庫</div><div style="font-size:14px;font-weight:700;">${ps.stock.new}</div></div>
+          <div style="text-align:center;"><div style="font-size:10px;color:var(--text-sub);">リユース</div><div style="font-size:14px;font-weight:700;">${ps.stock.reuse}</div></div>
+          <div style="text-align:center;"><div style="font-size:10px;color:var(--text-sub);">エコ</div><div style="font-size:14px;font-weight:700;">${ps.stock.eco}</div></div>
+        </div>
+      </div>
+      <div style="padding:0 14px 14px;">
+        <details style="margin-top:2px;">
+          <summary style="cursor:pointer;font-size:11px;font-weight:600;color:var(--text-sub);">🔩 使用部品（BOM） ${bomCount}点 ／ 合計 ¥${bomTotal.toLocaleString('ja-JP')}</summary>
+          <div style="margin-top:8px;">${_bomLeafHtml(model,term)}</div>
+        </details>
+      </div>
+    </div>`;
+}
+
+function _boardMasterMatches(model,term){
+  if(!term)return true;
+  if(_hit(model,term))return true;
+  const ps=_getPartsStock(model);
+  if(_hit(ps.spec,term)||_hit(ps.machineType,term))return true;
+  return ps.bom.some(r=>_hit(r.partNo,term)||_hit(r.name,term));
+}
+
+function renderBoards(){
+  const searchEl=document.getElementById('boards-search');
+  const term=(searchEl?searchEl.value:'').trim().toLowerCase();
+  const cursorPos=searchEl?searchEl.selectionStart:null;
+  const hadFocus=document.activeElement===searchEl;
+
+  const allModels=Object.keys(state.partsStock);
+
+  const sectionsHtml=BOARD_CATEGORY_DEFS.map(cat=>{
+    const models=allModels.filter(m=>(state.partsStock[m].category||'')===cat.key && _boardMasterMatches(m,term));
+    const rowsHtml=models.map(m=>_boardMasterRow(m,term)).join('');
+    return _treeBranch(
+      `${cat.key}_${cat.label} <span style="font-weight:400;color:var(--text-sub);">（${models.length}件）</span>`,
+      rowsHtml||`<div style="color:var(--text-muted);font-size:11px;padding:8px 0;">登録なし</div>`
+      +`<button class="btn btn-sm" style="margin-top:8px;" onclick="addBoardMaster('${cat.key}')">＋ ${cat.label}を追加</button>`,
+      !!term
+    );
+  }).join('');
+
+  const uncategorized=allModels.filter(m=>!(state.partsStock[m].category) && _boardMasterMatches(m,term));
+  const uncategorizedHtml=uncategorized.length?_treeBranch(
+    `未分類 <span style="font-weight:400;color:var(--text-sub);">（${uncategorized.length}件・機種管理から登録された品番など）</span>`,
+    uncategorized.map(m=>_boardMasterRow(m,term)).join(''),!!term
+  ):'';
+
+  document.getElementById('page-boards').innerHTML=`
+    <div class="page-heading"><div><h2>🔧 基板管理</h2><p>主制御基板(M)・液晶制御基板(D)・液晶IF基板(DE)・演出基板(E)・サブ制御基板(C) — パチンコ/スロット区分・仕様・価格・使用部品を品番単位で管理</p></div></div>
+    <div class="filter-bar">
+      <input id="boards-search" type="text" placeholder="🔍 品番・仕様・部品名で検索" value="${_esc(term)}" oninput="renderBoards()"
+        style="flex:1;min-width:240px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:13px;">
+      <button class="btn btn-sm" onclick="importBoardMasterSeed()">📋 初期データ取込</button>
+    </div>
+    <div class="table-wrap"><div style="padding:14px;">${sectionsHtml}${uncategorizedHtml}</div></div>`;
+
+  const newSearchEl=document.getElementById('boards-search');
+  if(newSearchEl&&hadFocus){
+    newSearchEl.focus();
+    if(cursorPos!=null)newSearchEl.setSelectionRange(cursorPos,cursorPos);
+  }
+}
+
+/* 基板マスタ 初期データ（ユーザー提供の一覧をもとに登録） */
+const BOARD_MASTER_SEED=[
+  {model:'M1602B', category:'M', machineType:'スロット'},
+  {model:'M1805D', category:'M', machineType:'スロット'},
+  {model:'M2104A', category:'M', machineType:'スロット'},
+  {model:'M2104A1',category:'M', machineType:'スロット'},
+  {model:'M2402A', category:'M', machineType:'スロット'},
+  {model:'M2401A', category:'M', machineType:'パチンコ'},
+  {model:'M2503A', category:'M', machineType:'パチンコ'},
+  {model:'D1401C', category:'D', machineType:'パチンコ/スロット'},
+  {model:'D2101A', category:'D', machineType:'パチンコ/スロット'},
+  {model:'D2101A1',category:'D', machineType:'パチンコ/スロット'},
+  {model:'D1901B', category:'D', machineType:''},
+  {model:'DE1802A',category:'DE',machineType:'パチンコ/スロット'},
+  {model:'DE2101A',category:'DE',machineType:'パチンコ'},
+  {model:'DE2103A1',category:'DE',machineType:'パチンコ'},
+  {model:'DE2101A1',category:'DE',machineType:'パチンコ'},
+  {model:'DE1607A',category:'DE',machineType:'スロット'},
+  {model:'DE1606A',category:'DE',machineType:'スロット'},
+  {model:'E1501C', category:'E', machineType:'スロット'},
+  {model:'E1902B', category:'E', machineType:'スロット'},
+  {model:'E2102B', category:'E', machineType:'パチンコ/スロット'},
+  {model:'E2002B', category:'E', machineType:'パチンコ'},
+  {model:'E2101B', category:'E', machineType:'パチンコ'},
+  {model:'E2301B', category:'E', machineType:'パチンコ'},
+  {model:'E2501B', category:'E', machineType:'パチンコ'},
+  {model:'E2503A', category:'E', machineType:'パチンコ'},
+  {model:'C1601E', category:'C', machineType:''},
+  {model:'C1901A', category:'C', machineType:''},
+  {model:'C2101B', category:'C', machineType:''},
+  {model:'C2401A', category:'C', machineType:''},
+  {model:'C2202B', category:'C', machineType:''},
+  {model:'C2501C', category:'C', machineType:''},
+  {model:'C2502A', category:'C', machineType:''},
+  {model:'C2501B', category:'C', machineType:''},
+];
+function importBoardMasterSeed(){
+  if(!confirm(`初期データ（${BOARD_MASTER_SEED.length}件の基板品番）を取込みますか？\n既存の在庫・BOMデータはそのまま保持され、用途・カテゴリのみ設定されます。`))return;
+  let count=0;
+  BOARD_MASTER_SEED.forEach(s=>{
+    const ps=_getPartsStock(s.model);
+    ps.category=s.category;
+    if(s.machineType)ps.machineType=s.machineType;
+    count++;
+  });
+  addLog(`🔧 基板マスタ初期データ取込: ${count}件`);
+  saveToGAS(`基板マスタ初期データ取込: ${count}件`);
+  showToast(`✅ 基板マスタ ${count}件を取込みました`);
+  renderBoards();
+}
+
+/* ============================================================
+   図鑑ビュー（機種管理・基板管理 共通の詳細モーダル）
+   写真・メモ・PDF/Excel添付ファイルの入力に対応
+============================================================ */
+let detailState={type:null,id:null};
+
+function _detailList(type){
+  return type==='machine'
+    ? [...MACHINES].map(m=>m.id).sort()
+    : Object.keys(state.partsStock).sort();
+}
+
+function openDetailModal(type,id){
+  detailState={type,id};
+  document.getElementById('detail-modal').classList.add('open');
+  _renderDetailModal();
+}
+function closeDetailModal(){
+  document.getElementById('detail-modal').classList.remove('open');
+}
+function detailNav(dir){
+  const list=_detailList(detailState.type);
+  const idx=list.indexOf(detailState.id);
+  if(idx<0)return;
+  const next=(idx+dir+list.length)%list.length;
+  detailState.id=list[next];
+  _renderDetailModal();
+}
+
+function _renderDetailModal(){
+  const {type,id}=detailState;
+  const list=_detailList(type);
+  const idx=list.indexOf(id);
+  document.getElementById('detail-modal-position').textContent=idx>=0?`${idx+1} / ${list.length}`:'';
+  if(type==='machine'){
+    document.getElementById('detail-modal-title').textContent=`📇 機種図鑑 — ${id}`;
+    document.getElementById('detail-modal-body').innerHTML=renderMachineDetailBody(id);
+  }else{
+    document.getElementById('detail-modal-title').textContent=`📇 基板図鑑 — ${id}`;
+    document.getElementById('detail-modal-body').innerHTML=renderBoardDetailBody(id);
+  }
+}
+
+function _photoBlock(photo,uploadHandlerAttr){
+  return`
+    <div style="flex-shrink:0;width:180px;">
+      <div style="width:180px;height:180px;border-radius:10px;overflow:hidden;background:#f1f5f9;border:1px solid var(--border);display:flex;align-items:center;justify-content:center;">
+        ${photo&&photo.url?`<img src="${photo.url}" style="width:100%;height:100%;object-fit:cover;">`:`<span style="color:var(--text-muted);font-size:12px;">写真なし</span>`}
+      </div>
+      <label class="btn btn-sm" style="display:block;text-align:center;margin-top:6px;cursor:pointer;">
+        📷 写真を${photo?'変更':'追加'}
+        <input type="file" accept="image/*" style="display:none;" ${uploadHandlerAttr}>
+      </label>
+    </div>`;
+}
+
+function _fileListBlock(files,label){
+  const rows=files.map(f=>`<div style="display:flex;align-items:center;justify-content:space-between;font-size:11px;padding:3px 0;">
+      <a href="${f.url}" target="_blank" style="color:var(--primary);text-decoration:none;">📄 ${_esc(f.fileName)}</a>
+      <span style="color:var(--text-muted);">${f.uploadedAt||''}</span>
+    </div>`).join('');
+  return`<div style="font-size:11px;font-weight:700;margin-bottom:4px;">${label}（PDF・Excel等）</div>
+    ${rows||'<div style="color:var(--text-muted);font-size:11px;">添付ファイルなし</div>'}`;
+}
+
+function renderMachineDetailBody(id){
+  const m=MACHINES.find(x=>x.id===id);
+  if(!m)return`<div style="color:var(--text-muted);">機種が見つかりません</div>`;
+  const photo=state.machinePhotos[id];
+  const sc=state.schedules[id]||{};
+  const doc=_getBoardDoc(id);
+  const hw=_hwSpecFor(id);
+  const files=_getDriveFiles(id);
+  const boardsSummary=BOARD_TYPE_DEFS.map(bt=>`<div style="font-size:11px;"><strong>${bt.key}_${bt.label}:</strong> ${_esc(doc[bt.key].model)||'—'}</div>`).join('');
+
+  return`
+    <div style="display:flex;gap:20px;flex-wrap:wrap;">
+      ${_photoBlock(photo,`onchange="handleMachinePhotoUpload(event,'${id}')"`)}
+      <div style="flex:1;min-width:280px;">
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:6px;">
+          <span style="font-size:20px;font-weight:700;">${id}</span>
+          ${badgeHtml(state.statuses[id])}
+        </div>
+        <div style="font-size:12px;color:var(--text-sub);display:grid;grid-template-columns:auto 1fr;gap:4px 10px;">
+          <span>担当者</span><span>${_esc(m.person)||'—'}</span>
+          <span>適合</span><span>${_esc(m.compliance)||'—'}</span>
+          <span>量産台数</span><span>${_esc(m.prodQty)||'—'}</span>
+          <span>ROM</span><span>${_esc(m.rom)||'—'}</span>
+          <span>量産出荷</span><span>${sc.prodShip||'—'}</span>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;">🧩 基板構成</div>
+      ${boardsSummary}
+    </div>
+    ${hw?`<div style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px;">⚙️ ハードウェア構成</div>
+      <div style="font-size:11px;color:var(--text-sub);">主制御:${_esc(hw.mainBoard)||'—'} / 液晶制御:${_esc(hw.lcdBoard)||'—'} / 演出IF:${_esc(hw.effectIfBoard)||'—'}</div>
+    </div>`:''}
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">📝 メモ</div>
+      <textarea onchange="updateMachineMemo('${id}',this.value)" rows="3"
+        style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;resize:vertical;">${_esc(state.notes[id])}</textarea>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      ${_fileListBlock(files,'📎 添付資料')}
+      <label class="btn btn-sm" style="margin-top:8px;cursor:pointer;display:inline-block;">
+        ＋ PDF/Excelを追加
+        <input type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" style="display:none;" onchange="handleDriveUpload(event,'${id}')">
+      </label>
+    </div>`;
+}
+
+function renderBoardDetailBody(model){
+  const ps=_getPartsStock(model);
+  if(!ps)return`<div style="color:var(--text-muted);">基板が見つかりません</div>`;
+  const photo=state.boardPhotos[model];
+  const files=_getBoardDriveFiles(model);
+  const catLabel=BOARD_CATEGORY_DEFS.find(c=>c.key===ps.category)?.label||'未分類';
+  const bomTotal=ps.bom.reduce((s,r)=>s+(r.qty*r.unitPrice),0);
+
+  return`
+    <div style="display:flex;gap:20px;flex-wrap:wrap;">
+      ${_photoBlock(photo,`onchange="handleBoardPhotoUpload(event,'${model}')"`)}
+      <div style="flex:1;min-width:280px;">
+        <div style="font-size:20px;font-weight:700;margin-bottom:6px;">${_esc(model)}</div>
+        <div style="font-size:12px;color:var(--text-sub);display:grid;grid-template-columns:auto 1fr;gap:4px 10px;">
+          <span>カテゴリ</span><span>${_esc(ps.category)} ${catLabel}</span>
+          <span>用途</span><span>${_esc(ps.machineType)||'（未設定）'}</span>
+          <span>価格（新品）</span><span>¥${Number(ps.price.new||0).toLocaleString('ja-JP')}</span>
+          <span>在庫</span><span>新品${ps.stock.new} / リユース${ps.stock.reuse} / エコ${ps.stock.eco}</span>
+        </div>
+      </div>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">仕様・概要</div>
+      <input value="${_esc(ps.spec)}" onchange="updateBoardMasterField('${model}','spec',this.value)"
+        style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;">
+    </div>
+    <div style="margin-top:12px;">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">🔩 使用部品（BOM） ${ps.bom.length}点 ／ 合計 ¥${bomTotal.toLocaleString('ja-JP')}</div>
+      ${_bomLeafHtml(model,'')}
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      <div style="font-size:12px;font-weight:700;margin-bottom:4px;">📝 メモ</div>
+      <textarea onchange="updateBoardMemo('${model}',this.value)" rows="3"
+        style="width:100%;padding:8px;border:1px solid var(--border);border-radius:6px;font-size:12px;resize:vertical;">${_esc(ps.memo)}</textarea>
+    </div>
+    <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--border);">
+      ${_fileListBlock(files,'📎 添付資料')}
+      <label class="btn btn-sm" style="margin-top:8px;cursor:pointer;display:inline-block;">
+        ＋ PDF/Excelを追加
+        <input type="file" accept=".pdf,.xlsx,.xls,.doc,.docx" style="display:none;" onchange="handleBoardDriveUpload(event,'${model}')">
+      </label>
+    </div>`;
+}
+
+function updateMachineMemo(id,value){
+  state.notes[id]=value;
+  const m=MACHINES.find(x=>x.id===id);
+  if(m)m.notes=value;
+  saveToGAS();
+  addLog(`メモ更新: ${id}`);
+}
+function updateBoardMemo(model,value){
+  _getPartsStock(model).memo=value;
+  saveToGAS();
+  addLog(`基板メモ更新: ${model}`);
+}
+
+function _uploadPhoto(file,folderKey,onDone){
+  if(file.size>20*1024*1024){showToast('⚠️ ファイルサイズは20MB以下にしてください');return;}
+  showToast('📤 写真をアップロード中...');
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const base64=ev.target.result.split(',')[1];
+    if(typeof google!=='undefined'&&google.script){
+      google.script.run
+        .withSuccessHandler(res=>{
+          try{
+            const r=JSON.parse(res);
+            if(r.success){onDone({fileId:r.fileId,fileName:r.fileName,url:r.url,uploadedAt:r.uploadedAt});showToast('✅ 写真を更新しました');}
+            else showToast('⚠️ '+r.error);
+          }catch(e){showToast('⚠️ レスポンスエラー');}
+        })
+        .withFailureHandler(err=>showToast('⚠️ '+err.message))
+        .uploadFileToDrive(file.name,base64,file.type||'image/jpeg',folderKey);
+    }else{showToast('⚠️ GAS環境でのみアップロード可能です');}
+  };
+  reader.readAsDataURL(file);
+}
+
+function handleMachinePhotoUpload(event,id){
+  const file=event.target.files[0];if(!file)return;
+  event.target.value='';
+  _uploadPhoto(file,id,photo=>{
+    state.machinePhotos[id]=photo;
+    saveToGAS();
+    if(detailState.type==='machine'&&detailState.id===id)_renderDetailModal();
+  });
+}
+function handleBoardPhotoUpload(event,model){
+  const file=event.target.files[0];if(!file)return;
+  event.target.value='';
+  _uploadPhoto(file,'board_'+model,photo=>{
+    state.boardPhotos[model]=photo;
+    saveToGAS();
+    if(detailState.type==='board'&&detailState.id===model)_renderDetailModal();
+  });
+}
+
+function handleBoardDriveUpload(event,model){
+  const file=event.target.files[0];
+  if(!file)return;
+  event.target.value='';
+  if(file.size>20*1024*1024){showToast('⚠️ ファイルサイズは20MB以下にしてください');return;}
+  showToast('📤 アップロード中...');
+  const reader=new FileReader();
+  reader.onload=ev=>{
+    const base64=ev.target.result.split(',')[1];
+    if(typeof google!=='undefined'&&google.script){
+      google.script.run
+        .withSuccessHandler(res=>{
+          try{
+            const r=JSON.parse(res);
+            if(r.success){
+              _getBoardDriveFiles(model).push({fileId:r.fileId,fileName:r.fileName,url:r.url,uploadedAt:r.uploadedAt});
+              saveToGAS();
+              showToast('✅ アップロード完了: '+r.fileName);
+              if(detailState.type==='board'&&detailState.id===model)_renderDetailModal();
+            }else{showToast('⚠️ '+r.error);}
+          }catch(e){showToast('⚠️ レスポンスエラー');}
+        })
+        .withFailureHandler(err=>showToast('⚠️ '+err.message))
+        .uploadFileToDrive(file.name,base64,file.type||'application/octet-stream','board_'+model);
+    }else{showToast('⚠️ GAS環境でのみアップロード可能です');}
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderPage(page){
+  if(page==='dashboard')renderDashboard();
+  else if(page==='schedule')renderSchedule();
+  else if(page==='eco')renderEco();
+  else if(page==='flow')renderFlow();
+  else if(page==='admin')renderAdmin();
+  else if(page==='log')renderLog();
+  else if(page==='future')renderFuturePage();
+  else if(page==='parts')renderParts();
+  else if(page==='boards')renderBoards();
+}
+
+/* ============================================================
+   GAS INTEGRATION & INIT
+============================================================ */
+// Note: main saveToGAS with alertDesc is defined earlier above state
+// This stub keeps backward compat for callers that pass no arg
+function _saveToGASNoAlert(){
+  saveToGAS();
+}
+
+function _init(saved){
+  if(saved){
+    try{
+      const s=typeof saved==='string'?JSON.parse(saved):saved;
+      if(s.statuses)Object.assign(state.statuses,s.statuses);
+      if(s.schedules)Object.assign(state.schedules,s.schedules);
+      if(s.notes)Object.assign(state.notes,s.notes);
+      if(s.eco)Object.assign(state.eco,s.eco);
+      if(s.config)Object.assign(state.config,s.config);
+      if(s.customFlows)state.customFlows=s.customFlows;
+      if(s.machineExtra)Object.assign(state.machineExtra,s.machineExtra);
+      if(s.machineFields){
+        Object.assign(state.machineFields,s.machineFields);
+        Object.entries(s.machineFields).forEach(([id,f])=>{
+          let m=MACHINES.find(x=>x.id===id);
+          if(!m){
+            m={id,person:'',compliance:'',prodQty:'',rom:'',
+              sampleImpl:null,sampleAssy:null,sampleShip:null,prodImpl:null,prodAssy:null,prodShip:null,
+              boards:[],notes:''};
+            MACHINES.push(m);
+            if(!state.statuses[id])state.statuses[id]='量産前';
+            if(!state.schedules[id])state.schedules[id]={sampleImpl:null,sampleAssy:null,sampleShip:null,prodImpl:null,prodAssy:null,prodShip:null};
+            if(!state.eco[id])state.eco[id]={collection:0,disassembly:0,e_inspect:0,snb_inspect:0,assembly:0,delivered:0,newParts:0};
+          }
+          Object.assign(m,f);
+        });
+      }
+      if(s.deliveryDocs)Object.assign(state.deliveryDocs,s.deliveryDocs);
+      if(s.milestones)Object.assign(state.milestones,s.milestones);
+      if(s.futureModels)state.futureModels=s.futureModels;
+      if(s.boardDocs)Object.assign(state.boardDocs,s.boardDocs);
+      if(s.partsStock)Object.assign(state.partsStock,s.partsStock);
+      if(s.hardwareSpecs)Object.assign(state.hardwareSpecs,s.hardwareSpecs);
+      if(s.machinePhotos)Object.assign(state.machinePhotos,s.machinePhotos);
+      if(s.boardPhotos)Object.assign(state.boardPhotos,s.boardPhotos);
+      if(s.boardDriveFiles)Object.assign(state.boardDriveFiles,s.boardDriveFiles);
+      if(s.driveFiles)Object.assign(state.driveFiles,s.driveFiles);
+      if(s.linkageUrlOverrides)Object.assign(state.linkageUrlOverrides,s.linkageUrlOverrides);
+      if(s.config&&s.config.tabSettings)Object.assign(state.config.tabSettings,s.config.tabSettings);
+    }catch(e){}
+  }
+  updateEcoBadge();
+  updateFutureBadge();
+  applyTabSettings();
+  renderDashboard();
+  window._appInitialized=true; // 初期化完了後は、以降の実行時エラーで画面全体を潰さないようにする
+}
+
+(function(){
+  var _diagEl=document.getElementById('diag-panel');
+  function _diag(msg){
+    console.log('[diag] '+msg);
+    if(_diagEl){_diagEl.style.display='block';_diagEl.textContent+=new Date().toISOString().slice(11,19)+' '+msg+'\n';}
+  }
+  var _initCalled=false;
+  function _safeInit(saved,label){
+    if(_initCalled)return;
+    _initCalled=true;
+    _diag('_init開始 ('+label+')');
+    try{
+      _init(saved);
+      _diag('_init完了、renderDashboard実行済み');
+    }catch(e){
+      _diag('_init内でエラー: '+e.message);
+      if(_diagEl)_diagEl.style.background='#7f1d1d';
+    }
+  }
+  _diag('起動: typeof google='+(typeof google)+' google.script='+(typeof google!=='undefined'?!!google.script:'n/a'));
+  if(typeof google!=='undefined'&&google.script){
+    _diag('google.script.run.loadData() 呼び出し中...(応答なければ5秒後にフォールバック)');
+    var _timeoutId=setTimeout(function(){
+      _diag('⚠️ 5秒応答なし。google.script.run(RPC通信)がブロックされている可能性。空データで初期化します。');
+      _safeInit(null,'timeout-fallback');
+    },5000);
+    google.script.run
+      .withSuccessHandler(function(saved){clearTimeout(_timeoutId);_diag('loadData成功、データ件数OK');_safeInit(saved,'success');})
+      .withFailureHandler(function(err){clearTimeout(_timeoutId);_diag('loadData失敗: '+(err&&err.message));_safeInit(null,'failure');})
+      .loadData();
+  }else{
+    _diag('google.scriptが存在しないため空データで初期化');
+    _safeInit(null,'no-google-script');
+  }
+})();
+
+
+
+
+
+
+</script>

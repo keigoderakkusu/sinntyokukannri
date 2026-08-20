@@ -10,6 +10,7 @@
 <?!= include('styles'); ?>
 </head>
 <body>
+<div id="diag-panel" style="display:none;position:fixed;bottom:0;left:0;right:0;background:#111;color:#0f0;font:11px/1.5 monospace;padding:8px 12px;z-index:99999;max-height:220px;overflow:auto;white-space:pre-wrap;border-top:3px solid #0f0;"></div>
 <div id="app-shell">
   <nav id="sidebar">
     <button class="sidebar-toggle" id="sidebar-toggle-btn" title="折り畳む">‹</button>
@@ -45,7 +46,7 @@
     <div id="topbar">
       <div>
         <div class="topbar-title" id="topbar-title">ダッシュボード</div>
-        <div class="topbar-sub">遊技機 基板・エコ進捗管理</div>
+        <div class="topbar-sub">遊技機 基板・エコ進捗管理 <span style="color:#dc2626;font-weight:700;">[build:20260804-v8]</span></div>
       </div>
       <div class="topbar-spacer"></div>
       <div class="topbar-actions">
@@ -695,6 +696,9 @@
 </div>
 
 <?!= include('app'); ?>
-<script src="?action=appjs"></script>
+<?!= include('appjs1'); ?>
+<?!= include('appjs2'); ?>
+<?!= include('appjs3'); ?>
+<?!= include('appjs4'); ?>
 </body>
 </html>

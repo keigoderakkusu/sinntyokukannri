@@ -1,0 +1,1356 @@
+<script>
+
+function onGanttMouseMove(e){
+  if(!ganttDrag)return;
+  const {bar,machineId,phaseKey,prevKey,mode,startX,containerWidth,
+         origEndDate,origStartDate,origLeftPct,origWidthPct}=ganttDrag;
+  const deltaX=e.clientX-startX;
+  const deltaDays=Math.round(deltaX/containerWidth*GANTT_TOTAL);
+  const tip=document.getElementById('gantt-tooltip');
+  tip.style.display='block';
+  tip.style.left=(e.clientX+12)+'px';
+  tip.style.top=(e.clientY-28)+'px';
+
+  if(mode==='move'){
+    // Shift both start and end by the same delta
+    const newEnd=_clampGantt(new Date(origEndDate.getTime()+deltaDays*86400000));
+    const newStart=_clampGantt(new Date(origStartDate.getTime()+deltaDays*86400000));
+    const endPct=_datePct(newEnd);
+    const startPct=_datePct(newStart);
+    bar.style.left=`${startPct.toFixed(2)}%`;
+    bar.style.width=`${Math.max(endPct-startPct,0.8).toFixed(2)}%`;
+    ganttDrag.pendingEnd=fmtDate(newEnd);
+    ganttDrag.pendingStart=prevKey?fmtDate(newStart):null;
+    const lbl=bar.querySelector('.gantt-bar-label');
+    const shortPhase=PHASE_LABELS[phaseKey]||phaseKey;
+    if(lbl)lbl.textContent=`${shortPhase.replace('見本機','').replace('量産','')} ${newEnd.getMonth()+1}/${newEnd.getDate()}`;
+    tip.textContent=`📦 ${shortPhase} 移動 → ${newEnd.getMonth()+1}/${newEnd.getDate()}`;
+
+  } else if(mode==='right'){
+    // Resize right edge: change end date only
+    const newEnd=_clampGantt(new Date(origEndDate.getTime()+deltaDays*86400000));
+    const startPct=origLeftPct;
+    const endPct=_datePct(newEnd);
+    if(endPct<=startPct+0.5)return; // don't collapse
+    bar.style.width=`${Math.max(endPct-startPct,0.8).toFixed(2)}%`;
+    ganttDrag.pendingEnd=fmtDate(newEnd);
+    ganttDrag.pendingStart=null;
+    const lbl=bar.querySelector('.gantt-bar-label');
+    const shortPhase=(PHASE_LABELS[phaseKey]||phaseKey).replace('見本機','').replace('量産','');
+    if(lbl)lbl.textContent=`${shortPhase} ${newEnd.getMonth()+1}/${newEnd.getDate()}`;
+    tip.textContent=`→ 終了: ${newEnd.getMonth()+1}/${newEnd.getDate()} (${deltaDays>0?'+':''+ deltaDays}日)`;
+
+  } else if(mode==='left'&&prevKey){
+    // Resize left edge: change start (prevKey) date only
+    const newStart=_clampGantt(new Date(origStartDate.getTime()+deltaDays*86400000));
+    const endPct=_datePct(origEndDate);
+    const startPct=_datePct(newStart);
+    if(startPct>=endPct-0.5)return; // don't collapse
+    bar.style.left=`${startPct.toFixed(2)}%`;
+    bar.style.width=`${Math.max(endPct-startPct,0.8).toFixed(2)}%`;
+    ganttDrag.pendingStart=fmtDate(newStart);
+    ganttDrag.pendingEnd=null;
+    tip.textContent=`← 開始: ${newStart.getMonth()+1}/${newStart.getDate()} (${deltaDays>0?'+':''+ deltaDays}日)`;
+  }
+}
+
+function onGanttMouseUp(){
+  if(!ganttDrag)return;
+  const {bar,machineId,phaseKey,prevKey,pendingEnd,pendingStart}=ganttDrag;
+  bar.classList.remove('dragging');
+  const tip=document.getElementById('gantt-tooltip');
+  if(tip)tip.style.display='none';
+
+  let changed=false;
+  if(pendingEnd){
+    state.schedules[machineId][phaseKey]=pendingEnd;
+    addLog(`${machineId} ${PHASE_LABELS[phaseKey]||phaseKey} → ${pendingEnd}`);
+    changed=true;
+  }
+  if(pendingStart&&prevKey){
+    state.schedules[machineId][prevKey]=pendingStart;
+    addLog(`${machineId} ${PHASE_LABELS[prevKey]||prevKey} → ${pendingStart}`);
+    changed=true;
+  }
+  if(changed){
+    const msgs=[];
+    if(pendingEnd)msgs.push(`${(PHASE_LABELS[phaseKey]||phaseKey).replace('見本機','').replace('量産','')}: ${pendingEnd.slice(5).replace('-','/')}`);
+    if(pendingStart&&prevKey)msgs.push(`開始: ${pendingStart.slice(5).replace('-','/')}`);
+    showToast(`✅ ${machineId} ${msgs.join(' / ')}`);
+    saveToGAS();
+    renderPage('schedule');
+  }
+  document.removeEventListener('mousemove',onGanttMouseMove);
+  document.removeEventListener('mouseup',onGanttMouseUp);
+  ganttDrag=null;
+}
+
+// keep backward-compat alias
+function startGanttDrag(e){ startGanttMoveOrResize(e,'move'); }
+
+/* ============================================================
+   ECO DRAG & DROP
+============================================================ */
+let ecoDragSrc=null;
+
+function onEcoDragStart(e){
+  const el=e.currentTarget;
+  ecoDragSrc={machine:el.dataset.machine,stage:el.dataset.stage};
+  e.dataTransfer.effectAllowed='move';
+  e.dataTransfer.setData('text/plain',JSON.stringify(ecoDragSrc));
+  setTimeout(()=>el.classList.add('dragging'),0);
+}
+function onEcoDragEnd(e){
+  e.currentTarget.classList.remove('dragging');
+  ecoDragSrc=null;
+}
+function onEcoDragOver(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect='move';
+  e.currentTarget.classList.add('drag-over');
+}
+function onEcoDragLeave(e){
+  e.currentTarget.classList.remove('drag-over');
+}
+function onEcoDrop(e){
+  e.preventDefault();
+  const target=e.currentTarget;
+  target.classList.remove('drag-over');
+  if(!ecoDragSrc)return;
+  if(ecoDragSrc.machine!==target.dataset.machine){showToast('⚠️ 異なる機種間の移動は不可');return;}
+  if(ecoDragSrc.stage===target.dataset.stage)return;
+  openMoveFromTo(ecoDragSrc.machine,ecoDragSrc.stage,target.dataset.stage);
+  ecoDragSrc=null;
+}
+
+/* ============================================================
+   INLINE EDIT — DASHBOARD TABLE
+============================================================ */
+function inlineEditStatus(td,machineId){
+  const cur=state.statuses[machineId];
+  td.classList.add('editing');
+  td.innerHTML=`<select onchange="quickSaveStatus('${machineId}',this.value,this.closest('td'))">
+    ${['量産前','量産中','量産終了'].map(s=>`<option ${s===cur?'selected':''}>${s}</option>`).join('')}
+  </select>`;
+  td.querySelector('select').focus();
+}
+
+function quickSaveStatus(machineId,value,td){
+  state.statuses[machineId]=value;
+  addLog(`${machineId} ステータス → ${value}`);
+  saveToGAS();
+  td.classList.remove('editing');
+  td.innerHTML=badgeHtml(value);
+  // Re-bind click
+  td.onclick=()=>inlineEditStatus(td,machineId);
+}
+
+function inlineEditDate(td,machineId,phaseKey){
+  const cur=state.schedules[machineId]?.[phaseKey]||'';
+  td.classList.add('editing');
+  td.innerHTML=`<input type="date" value="${cur}" style="width:130px;">`;
+  const input=td.querySelector('input');
+  input.focus();
+  const save=()=>{
+    const val=input.value||null;
+    state.schedules[machineId][phaseKey]=val;
+    addLog(`${machineId} ${PHASE_LABELS[phaseKey]||phaseKey} → ${val||'削除'}`);
+    saveToGAS();
+    renderPage(currentPage);
+  };
+  input.addEventListener('blur',save);
+  input.addEventListener('keydown',e=>{if(e.key==='Enter')save();});
+}
+
+/* ============================================================
+   EDIT MODAL
+============================================================ */
+let editingId=null;
+function _getExtra(id){
+  if(!state.machineExtra[id]) state.machineExtra[id]={
+    productionPlanUrl:'',deliveryOrderUrl:'',bomUrl:'',specUrl:'',quoteUrl:'',
+    codes12d:'',romType:'',customFields:[]
+  };
+  return state.machineExtra[id];
+}
+
+function openEditModal(id){
+  editingId=id;
+  const m=MACHINES.find(x=>x.id===id);
+  const sch=state.schedules[id];
+  const ex=_getExtra(id);
+  document.getElementById('edit-modal-title').textContent=`${id} — 編集`;
+  document.getElementById('edit-status').value=state.statuses[id]||'量産前';
+  document.getElementById('edit-qty').value=m?m.prodQty:'';
+  document.getElementById('edit-person').value=m?m.person:'';
+  document.getElementById('edit-compliance').value=m?m.compliance||'':'';
+  document.getElementById('edit-romType').value=ex.romType||'';
+  document.getElementById('edit-codes12d').value=ex.codes12d||'';
+  document.getElementById('edit-sampleImpl').value=sch?sch.sampleImpl||'':'';
+  document.getElementById('edit-sampleAssy').value=sch?sch.sampleAssy||'':'';
+  document.getElementById('edit-sampleShip').value=sch?sch.sampleShip||'':'';
+  document.getElementById('edit-prodImpl').value=sch?sch.prodImpl||'':'';
+  document.getElementById('edit-prodAssy').value=sch?sch.prodAssy||'':'';
+  document.getElementById('edit-prodShip').value=sch?sch.prodShip||'':'';
+  document.getElementById('edit-productionPlanUrl').value=ex.productionPlanUrl||'';
+  document.getElementById('edit-deliveryOrderUrl').value=ex.deliveryOrderUrl||'';
+  document.getElementById('edit-bomUrl').value=ex.bomUrl||'';
+  document.getElementById('edit-specUrl').value=ex.specUrl||'';
+  document.getElementById('edit-quoteUrl').value=ex.quoteUrl||'';
+  document.getElementById('edit-notes').value=state.notes[id]||'';
+  document.getElementById('edit-quote-matches').innerHTML='';
+  _renderCustomFields(ex.customFields||[]);
+  document.getElementById('edit-modal').classList.add('open');
+}
+
+function _renderCustomFields(fields){
+  const wrap=document.getElementById('edit-custom-fields');
+  if(!wrap)return;
+  if(!fields.length){wrap.innerHTML='<div style="font-size:11px;color:var(--text-muted);padding:4px 0;">（カスタム項目なし）</div>';return;}
+  wrap.innerHTML=fields.map((f,i)=>`
+    <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px;" data-cf-idx="${i}">
+      <input type="text" value="${f.name||''}" placeholder="項目名"
+        style="width:150px;flex-shrink:0;font-size:12px;"
+        onchange="updateCustomFieldName(${i},this.value)">
+      <input type="text" value="${f.value||''}" placeholder="値・URL・メモ"
+        style="flex:1;font-size:12px;"
+        onchange="updateCustomFieldValue(${i},this.value)">
+      <button class="btn btn-sm" style="padding:2px 8px;color:var(--danger);flex-shrink:0;"
+        onclick="removeCustomField(${i})">✕</button>
+    </div>`).join('');
+}
+
+function addCustomField(){
+  const ex=_getExtra(editingId);
+  if(!ex.customFields)ex.customFields=[];
+  ex.customFields.push({id:'CF-'+Date.now(),name:'',value:''});
+  _renderCustomFields(ex.customFields);
+}
+function updateCustomFieldName(i,v){const ex=_getExtra(editingId);if(ex.customFields[i])ex.customFields[i].name=v;}
+function updateCustomFieldValue(i,v){const ex=_getExtra(editingId);if(ex.customFields[i])ex.customFields[i].value=v;}
+function removeCustomField(i){
+  const ex=_getExtra(editingId);
+  ex.customFields.splice(i,1);
+  _renderCustomFields(ex.customFields);
+}
+
+function openDocLink(inputId){
+  const url=document.getElementById(inputId)?.value?.trim();
+  if(!url){showToast('⚠️ URLが入力されていません');return;}
+  window.open(url,'_blank');
+}
+
+function fetchQuoteLink(){
+  const id=editingId;
+  const d=state.linkageData;
+  const qDiv=document.getElementById('edit-quote-matches');
+  if(!d){
+    if(qDiv)qDiv.innerHTML='<span style="color:var(--warning);">⚠️ 先に管理コンソールで見積管理システムのデータを取得してください</span>';
+    return;
+  }
+  const estimates=(d.estimates||d.quotes||[]).filter(e=>(e.id||e.machineId||'').toUpperCase()===id.toUpperCase());
+  if(!estimates.length){
+    if(qDiv)qDiv.innerHTML=`<span style="color:var(--text-muted);">機種「${id}」に一致する見積データなし</span>`;
+    return;
+  }
+  const links=estimates.map(e=>{
+    const url=e.url||e.link||e.sheetUrl||'';
+    const label=`${e.id||id} — ${e.customer||e.client||''} ¥${e.amount?Number(e.amount).toLocaleString():'—'} [${e.status||''}]`;
+    return url?`<a href="${url}" target="_blank" style="display:block;color:var(--primary);font-size:11px;margin-top:2px;">${label}</a>`
+              :`<span style="font-size:11px;">${label}</span>`;
+  }).join('');
+  if(estimates[0]?.url||estimates[0]?.link){
+    document.getElementById('edit-quoteUrl').value=estimates[0].url||estimates[0].link||'';
+  }
+  if(qDiv)qDiv.innerHTML=links;
+}
+
+function closeEditModal(){document.getElementById('edit-modal').classList.remove('open');}
+
+function saveEditModal(){
+  const id=editingId;
+  const m=MACHINES.find(x=>x.id===id);
+  const ex=_getExtra(id);
+  state.statuses[id]=document.getElementById('edit-status').value;
+  if(m){
+    m.prodQty=document.getElementById('edit-qty').value;
+    m.person=document.getElementById('edit-person').value;
+    m.compliance=document.getElementById('edit-compliance').value;
+  }
+  ex.romType=document.getElementById('edit-romType').value;
+  ex.codes12d=document.getElementById('edit-codes12d').value;
+  ex.productionPlanUrl=document.getElementById('edit-productionPlanUrl').value;
+  ex.deliveryOrderUrl=document.getElementById('edit-deliveryOrderUrl').value;
+  ex.bomUrl=document.getElementById('edit-bomUrl').value;
+  ex.specUrl=document.getElementById('edit-specUrl').value;
+  ex.quoteUrl=document.getElementById('edit-quoteUrl').value;
+  state.schedules[id]={
+    sampleImpl:document.getElementById('edit-sampleImpl').value||null,
+    sampleAssy:document.getElementById('edit-sampleAssy').value||null,
+    sampleShip:document.getElementById('edit-sampleShip').value||null,
+    prodImpl:document.getElementById('edit-prodImpl').value||null,
+    prodAssy:document.getElementById('edit-prodAssy').value||null,
+    prodShip:document.getElementById('edit-prodShip').value||null,
+  };
+  state.notes[id]=document.getElementById('edit-notes').value;
+  addLog(`${id} 情報更新`);
+  closeEditModal();
+  showToast(`✅ ${id} を更新しました`);
+  saveToGAS(`${id} スケジュール更新`);
+  renderPage(currentPage);
+}
+
+/* ============================================================
+   ADD MACHINE MODAL
+============================================================ */
+function openAddMachineModal(){
+  ['add-id','add-person','add-compliance','add-qty','add-rom','add-sampleShip','add-prodImpl','add-prodAssy','add-prodShip','add-notes'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.value='';
+  });
+  document.getElementById('add-status').value='量産前';
+  document.getElementById('add-machine-modal').classList.add('open');
+}
+function closeAddMachineModal(){document.getElementById('add-machine-modal').classList.remove('open');}
+function saveAddMachineModal(){
+  const id=document.getElementById('add-id').value.trim().toUpperCase();
+  if(!id){showToast('⚠️ 機種名を入力してください');return;}
+  if(MACHINES.find(m=>m.id===id)){showToast(`⚠️ 機種「${id}」は既に存在します`);return;}
+  const newM={
+    id,
+    person:document.getElementById('add-person').value.trim(),
+    compliance:document.getElementById('add-compliance').value.trim(),
+    prodQty:document.getElementById('add-qty').value.trim()||'未定',
+    rom:document.getElementById('add-rom').value.trim(),
+    sampleImpl:null,sampleAssy:null,
+    sampleShip:document.getElementById('add-sampleShip').value||null,
+    prodImpl:document.getElementById('add-prodImpl').value||null,
+    prodAssy:document.getElementById('add-prodAssy').value||null,
+    prodShip:document.getElementById('add-prodShip').value||null,
+    boards:[],
+    notes:document.getElementById('add-notes').value.trim(),
+  };
+  MACHINES.push(newM);
+  state.statuses[id]=document.getElementById('add-status').value;
+  state.schedules[id]={
+    sampleImpl:newM.sampleImpl,sampleAssy:newM.sampleAssy,sampleShip:newM.sampleShip,
+    prodImpl:newM.prodImpl,prodAssy:newM.prodAssy,prodShip:newM.prodShip,
+  };
+  state.notes[id]=newM.notes;
+  state.eco[id]={collection:0,disassembly:0,e_inspect:0,snb_inspect:0,assembly:0,delivered:0,newParts:0};
+  addLog(`機種 ${id} を追加`);
+  closeAddMachineModal();
+  showToast(`✅ ${id} を追加しました`);
+  saveToGAS();
+  renderAdmin();
+}
+
+/* ============================================================
+   DELETE MACHINE
+============================================================ */
+function deleteMachine(id){
+  if(!confirm(`機種「${id}」を削除しますか？`))return;
+  const idx=MACHINES.findIndex(m=>m.id===id);
+  if(idx===-1)return;
+  MACHINES.splice(idx,1);
+  delete state.statuses[id];delete state.schedules[id];
+  delete state.notes[id];delete state.eco[id];delete state.machineFields[id];
+  if(state.selectedMachine===id)state.selectedMachine=MACHINES[0]?.id||'';
+  if(state.flowMachine===id)state.flowMachine=MACHINES[0]?.id||'';
+  addLog(`機種 ${id} を削除`);
+  showToast(`🗑️ ${id} を削除しました`);
+  saveToGAS();renderAdmin();
+}
+
+/* ============================================================
+   ECO MODAL
+============================================================ */
+let ecoEditing={machine:null,stage:null};
+function openEcoModal(machine,stageId){
+  ecoEditing={machine,stage:stageId};
+  const isNew=stageId==='newParts';
+  const label=isNew?'新品投入数':ECO_STAGES.find(s=>s.id===stageId).label;
+  document.getElementById('eco-modal-title').textContent=`${machine} — ${label} 台数更新`;
+  document.getElementById('eco-modal-label').textContent=`${label} 現在台数（台）`;
+  document.getElementById('eco-modal-val').value=state.eco[machine]?.[stageId]||0;
+  document.getElementById('eco-modal').classList.add('open');
+  setTimeout(()=>document.getElementById('eco-modal-val').select(),50);
+}
+function closeEcoModal(){document.getElementById('eco-modal').classList.remove('open');}
+function saveEcoModal(){
+  const {machine,stage}=ecoEditing;
+  const val=parseInt(document.getElementById('eco-modal-val').value)||0;
+  if(!state.eco[machine])state.eco[machine]={};
+  state.eco[machine][stage]=val;
+  const isNew=stage==='newParts';
+  const label=isNew?'新品投入数':ECO_STAGES.find(s=>s.id===stage).label;
+  addLog(`エコ [${machine}] ${label}: ${val}台`);
+  closeEcoModal();
+  showToast(`✅ ${machine} / ${label}: ${val}台`);
+  renderPage('eco');updateEcoBadge();
+  saveToGAS(`エコ [${machine}] ${label}: ${val}台`);
+}
+
+/* ============================================================
+   MOVE MODAL
+============================================================ */
+function openMoveFromTo(machine,fromStage,toStage){
+  state.selectedMachine=machine;
+  const eco=state.eco[machine]||{};
+  const fromSel=document.getElementById('move-from');
+  const toSel=document.getElementById('move-to');
+  fromSel.innerHTML=ECO_STAGES.map(s=>`<option value="${s.id}"${s.id===fromStage?' selected':''}>${s.label}（${eco[s.id]||0}台）</option>`).join('');
+  toSel.innerHTML=ECO_STAGES.map(s=>`<option value="${s.id}"${s.id===toStage?' selected':''}>${s.label}</option>`).join('');
+  document.getElementById('move-qty').value=eco[fromStage]||1;
+  document.getElementById('move-modal').classList.add('open');
+}
+function openMoveModal(){
+  openMoveFromTo(state.selectedMachine,ECO_STAGES[0].id,ECO_STAGES[1].id);
+}
+function closeMoveModal(){document.getElementById('move-modal').classList.remove('open');}
+function execMove(){
+  const machine=state.selectedMachine;
+  const from=document.getElementById('move-from').value;
+  const to=document.getElementById('move-to').value;
+  const qty=parseInt(document.getElementById('move-qty').value)||0;
+  if(from===to){showToast('⚠️ 移動元と移動先が同じです');return;}
+  const eco=state.eco[machine]||{};
+  const avail=eco[from]||0;
+  const actual=Math.min(qty,avail);
+  if(actual<=0){showToast('⚠️ 移動できる台数がありません');return;}
+  eco[from]=avail-actual;eco[to]=(eco[to]||0)+actual;
+  state.eco[machine]=eco;
+  const fl=ECO_STAGES.find(s=>s.id===from).label;
+  const tl=ECO_STAGES.find(s=>s.id===to).label;
+  addLog(`エコ [${machine}] ${fl}→${tl}: ${actual}台`);
+  closeMoveModal();
+  showToast(`✅ ${actual}台 移動`);
+  renderPage('eco');updateEcoBadge();
+  saveToGAS(`エコ [${machine}] ${fl}→${tl}: ${actual}台移動`);
+}
+
+
+/* ============================================================
+   RENDER: DASHBOARD
+============================================================ */
+function renderDashboard(){
+  const schedules=state.schedules;
+  const totalM=MACHINES.length;
+  const active=MACHINES.filter(m=>state.statuses[m.id]==='量産中').length;
+  const waiting=MACHINES.filter(m=>state.statuses[m.id]==='量産前').length;
+  const done=MACHINES.filter(m=>state.statuses[m.id]==='量産終了').length;
+  const ecoTotal=Object.values(state.eco).reduce((s,eco)=>
+    s+Object.entries(eco||{}).filter(([k])=>k!=='delivered'&&k!=='newParts').reduce((a,[,v])=>a+v,0),0);
+
+  const nearItems=[];
+  MACHINES.forEach(m=>{
+    const sc=schedules[m.id]||{};
+    [{key:'sampleShip',label:'見本機出荷'},{key:'prodImpl',label:'量産実装'},
+     {key:'prodAssy',label:'量産組立'},{key:'prodShip',label:'量産出荷'}].forEach(f=>{
+      if(isNear(sc[f.key]))nearItems.push({id:m.id,label:f.label,diff:getDiff(sc[f.key])});
+    });
+  });
+
+  const msAlerts=getMilestoneAlerts();
+  let alertHtml='';
+  if(nearItems.length>0){
+    alertHtml+=`<div class="alert-bar">⚠️ 直近7日以内: ${nearItems.map(i=>`【${i.id}】${i.label}(${i.diff===0?'本日':i.diff+'日後'})`).join('　')}</div>`;
+  }
+  if(msAlerts.length>0){
+    const urgents=msAlerts.filter(a=>a.urgent);
+    const warns=msAlerts.filter(a=>!a.urgent);
+    if(urgents.length) alertHtml+=`<div class="alert-bar" style="background:#fef2f2;border-color:#fca5a5;color:#991b1b;">🚨 期限超過: ${urgents.map(a=>`【${a.machineId}】${a.label}`).join('　')}</div>`;
+    if(warns.length) alertHtml+=`<div class="alert-bar" style="background:#fffbeb;border-color:#fcd34d;color:#92400e;">⏰ 期限14日以内: ${warns.map(a=>`【${a.machineId}】${a.label} あと${a.diff}日`).join('　')}</div>`;
+  }
+  {
+    const lastImp=state.config.lastSunDenshiImportAt;
+    const daysSince=lastImp?Math.floor((todayD-new Date(lastImp))/86400000):null;
+    if(!lastImp||daysSince>35){
+      alertHtml+=`<div class="alert-bar" style="background:#fffbeb;border-color:#fcd34d;color:#92400e;">📊 生産計画Excel${lastImp?`の取込から${daysSince}日経過（最終: ${lastImp}）`:'が未取込です'} — <a href="#" onclick="showPage('future');return false;" style="color:#92400e;font-weight:700;text-decoration:underline;">将来機種計画ページで月次取込</a></div>`;
+    }
+  }
+
+  const machineRows=MACHINES.map(m=>{
+    const sc=schedules[m.id]||{};const status=state.statuses[m.id];
+    const estCount=getEstimatesForMachine(m.id).length;
+    const driveCount=_getDriveFiles(m.id).length;
+    return`<tr>
+      <td onclick="showPage('flow');state.flowMachine='${m.id}';renderPage('flow');" style="cursor:pointer;"><strong>${m.id}</strong></td>
+      <td>${m.person}</td>
+      <td class="inline-editable" onclick="inlineEditStatus(this,'${m.id}')">${badgeHtml(status)}</td>
+      <td style="font-size:11px;">${m.compliance||'—'}</td>
+      <td style="font-size:11px;">${m.prodQty}</td>
+      ${tdDate(sc.sampleShip,m.id,'sampleShip')}
+      ${tdDate(sc.prodImpl,m.id,'prodImpl')}
+      ${tdDate(sc.prodAssy,m.id,'prodAssy')}
+      ${tdDate(sc.prodShip,m.id,'prodShip')}
+      <td style="font-size:11px;color:var(--text-sub);" class="inline-editable"
+        ondblclick="inlineEditDate(this,'${m.id}','notes_unused')"
+        title="ダブルクリックで編集">${state.notes[m.id]||''}</td>
+      <td style="font-size:11px;">
+        ${estCount>0?`<button class="btn btn-sm" onclick="toggleDashEstimates(event,'${m.id}')" style="font-size:10px;padding:2px 8px;background:#eff6ff;border-color:#bfdbfe;color:#1d4ed8;">📋 見積 ${estCount}件</button>`:`<span style="color:var(--text-muted);">—</span>`}
+      </td>
+      <td onclick="event.stopPropagation()" style="white-space:nowrap;">
+        <button class="btn btn-sm" onclick="openEditModal('${m.id}')">編集</button>
+        <label class="btn btn-sm" style="cursor:pointer;margin-left:4px;" title="Driveにファイルをアップロード">
+          📎${driveCount>0?` <span style="background:var(--primary);color:#fff;border-radius:8px;font-size:10px;padding:0 5px;">${driveCount}</span>`:''}
+          <input type="file" accept=".pdf,.xlsx,.xls,.png,.jpg,.jpeg,.doc,.docx" style="display:none"
+            onchange="handleDriveUpload(event,'${m.id}')">
+        </label>
+      </td>
+    </tr>
+    <tr id="dash-est-${m.id}" style="display:none;">
+      <td colspan="12" style="padding:0;">
+        <div style="padding:10px 16px;background:#f8fafc;border-top:1px solid var(--border-light);">
+          ${renderEstimatesTable(m.id)}
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  const ecoMachines=MACHINES.filter(m=>Object.values(state.eco[m.id]||{}).some(v=>v>0));
+  let ecoHtml='';
+  if(ecoMachines.length>0){
+    const ecoRows=ecoMachines.map(m=>{
+      const eco=state.eco[m.id]||{};
+      const total=Object.values(eco).reduce((a,b)=>a+b,0);
+      const np=eco.newParts||0;
+      return`<tr><td><strong>${m.id}</strong></td>${ECO_STAGES.map(s=>{
+        const v=eco[s.id]||0;return`<td class="center">${v>0?`<strong>${v}</strong>`:'—'}</td>`;
+      }).join('')}<td class="center" style="color:#d97706;">${np>0?`<strong>${np}</strong>`:'—'}</td><td class="center"><strong>${total}</strong></td></tr>`;
+    }).join('');
+    ecoHtml=`<div class="table-wrap" style="margin-top:20px;">
+      <div class="table-toolbar"><h2>♻️ エコ台数サマリー（リユース／新品）</h2><button class="btn btn-sm" onclick="showPage('eco')">詳細 →</button></div>
+      <table><thead><tr><th>機種</th>${ECO_STAGES.map(s=>`<th class="center">${s.label}</th>`).join('')}<th class="center" style="color:#d97706;">🆕新品</th><th class="center">合計</th></tr></thead>
+      <tbody>${ecoRows}</tbody></table></div>`;
+  }
+
+  document.getElementById('page-dashboard').innerHTML=`
+    ${alertHtml}
+    <div class="summary-grid">
+      <div class="summary-card"><div class="lbl">登録機種数</div><div class="val">${totalM}</div><div class="sub">全機種</div></div>
+      <div class="summary-card"><div class="lbl">量産中</div><div class="val c-blue">${active}</div><div class="sub">生産進行中</div></div>
+      <div class="summary-card"><div class="lbl">量産前</div><div class="val c-yellow">${waiting}</div><div class="sub">準備中</div></div>
+      <div class="summary-card"><div class="lbl">量産終了</div><div class="val c-green">${done}</div><div class="sub">完了</div></div>
+      <div class="summary-card"><div class="lbl">エコ処理中</div><div class="val c-blue">${ecoTotal}</div><div class="sub">全工程合計</div></div>
+    </div>
+    <div class="table-wrap">
+      <div class="table-toolbar"><h2>📋 機種一覧</h2>
+        <div style="font-size:11px;color:var(--text-muted);">ステータスをクリック／日付をダブルクリックでインライン編集</div>
+      </div>
+      <table><thead><tr>
+        <th>機種名</th><th>担当者</th><th>ステータス</th><th>適合</th><th>量産台数</th>
+        <th class="center">見本機出荷</th><th class="center">量産実装</th><th class="center">量産組立</th><th class="center">量産出荷</th>
+        <th>備考</th><th>見積</th><th></th>
+      </tr></thead><tbody>${machineRows}</tbody></table>
+    </div>
+    ${ecoHtml}
+    <div style="margin-top:12px;display:flex;gap:12px;font-size:11px;color:var(--text-muted);align-items:center;">
+      <span class="badge badge-warning" style="font-size:10px;">直近</span>7日以内
+      <span class="badge badge-done" style="font-size:10px;">完了</span>完了済み
+    </div>`;
+}
+
+
+/* ============================================================
+   RENDER: SCHEDULE (Gantt + drag)
+============================================================ */
+function renderSchedule(){
+  const MONTHS=[
+    {label:'3月',days:31},{label:'4月',days:30},{label:'5月',days:31},
+    {label:'6月',days:30},{label:'7月',days:31},{label:'8月',days:31},{label:'9月',days:30},
+  ];
+  // pct: date string → % position in gantt
+  const datePct=d=>{
+    if(!d)return null;
+    const p=(new Date(d)-GANTT_START)/(GANTT_TOTAL*86400000)*100;
+    return Math.min(100,Math.max(0,p));
+  };
+  const todayPct=datePct(TODAY);
+
+  // Phase color legend
+  const PHASE_DEFS=[
+    {key:'sampleImpl',label:'見本機実装',color:'#7c3aed',prevKey:null},
+    {key:'sampleAssy',label:'見本機組立',color:'#0891b2',prevKey:'sampleImpl'},
+    {key:'sampleShip',label:'見本機出荷',color:'#1d4ed8',prevKey:'sampleAssy'},
+    {key:'prodImpl',  label:'量産実装',  color:'#15803d',prevKey:null},
+    {key:'prodAssy',  label:'量産組立',  color:'#b45309',prevKey:'prodImpl'},
+    {key:'prodShip',  label:'量産出荷',  color:'#dc2626',prevKey:'prodAssy'},
+  ];
+
+  const BAR_H=24, LANE_H=30, TOP_PAD=8, BOT_PAD=8, MIN_BAR_DAYS=10;
+
+  let gridLines='',acc=0;
+  MONTHS.forEach((m,i)=>{
+    if(i>0)gridLines+=`<div class="gantt-month-line" style="left:${acc/GANTT_TOTAL*100}%;"></div>`;
+    acc+=m.days;
+  });
+
+  const monthHdr=MONTHS.map(m=>`<div style="flex:${m.days};border-right:1px solid var(--border-light);padding:6px 0;text-align:center;font-size:11px;font-weight:600;color:var(--text-sub);">${m.label}</div>`).join('');
+
+  const rowsHtml=MACHINES.map(m=>{
+    const sc=state.schedules[m.id]||{};
+
+    // Build range bars: each bar spans from prevMilestone → thisMilestone
+    const bars=[];
+    PHASE_DEFS.forEach(def=>{
+      const endDateStr=sc[def.key];
+      if(!endDateStr)return;
+      const endD=new Date(endDateStr);
+      let startD;
+      if(def.prevKey&&sc[def.prevKey]){
+        startD=new Date(sc[def.prevKey]);
+      }else{
+        // No prev date — use MIN_BAR_DAYS before milestone
+        startD=new Date(endD);
+        startD.setDate(startD.getDate()-MIN_BAR_DAYS);
+        if(startD<GANTT_START)startD=new Date(GANTT_START);
+      }
+      // Enforce minimum 3-day visual width
+      if((endD-startD)/86400000<3){
+        startD=new Date(endD);startD.setDate(startD.getDate()-3);
+        if(startD<GANTT_START)startD=new Date(GANTT_START);
+      }
+      const sp=Math.max(0,(startD-GANTT_START)/(GANTT_TOTAL*86400000)*100);
+      const ep=datePct(endDateStr)||0;
+      bars.push({
+        key:def.key,prevKey:def.prevKey||'',label:def.label,color:def.color,
+        startPct:sp,endPct:ep,
+        widthPct:Math.max(ep-sp,0.8),
+        dateStr:endDateStr,lane:0,
+      });
+    });
+
+    // Greedy lane assignment — sort by start, assign to first non-overlapping lane
+    bars.sort((a,b)=>a.startPct-b.startPct);
+    const laneEnds=[]; // laneEnds[i] = endPct of last bar placed in lane i
+    bars.forEach(bar=>{
+      let lane=0;
+      // A small overlap threshold (0.5%) avoids false positives from rounding
+      while(lane<laneEnds.length&&laneEnds[lane]>bar.startPct+0.5)lane++;
+      bar.lane=lane;
+      laneEnds[lane]=bar.endPct;
+    });
+
+    const maxLane=bars.length>0?Math.max(...bars.map(b=>b.lane)):0;
+    const rowH=TOP_PAD+(maxLane+1)*LANE_H+BOT_PAD;
+
+    const barsHtml=bars.map(bar=>{
+      const top=TOP_PAD+bar.lane*LANE_H;
+      const done=isPast(bar.dateStr);
+      const near=!done&&isNear(bar.dateStr);
+      const color=done?'#94a3b8':bar.color;
+      const outline=near?`outline:2px solid #fbbf24;outline-offset:1px;`:'';
+      const shortLabel=bar.label.replace('見本機','').replace('量産','');
+      return`<div class="gantt-bar"
+        data-machine="${m.id}" data-phase="${bar.key}" data-prev="${bar.prevKey}"
+        style="left:${bar.startPct.toFixed(2)}%;width:${bar.widthPct.toFixed(2)}%;top:${top}px;height:${BAR_H}px;background:${color};${outline}cursor:grab;display:flex;align-items:center;"
+        onmousedown="startGanttMoveOrResize(event,'move')"
+        title="${bar.label}: ${fmtD(bar.dateStr)}${done?' ✅':''}${near?' ⚠️直近':''}">
+        <div class="gantt-resize-handle gantt-resize-left" onmousedown="startGanttMoveOrResize(event,'left')"></div>
+        <span class="gantt-bar-label">${shortLabel} ${fmtD(bar.dateStr)}</span>
+        <div class="gantt-resize-handle gantt-resize-right" onmousedown="startGanttMoveOrResize(event,'right')"></div>
+      </div>`;
+    }).join('');
+
+    return`<div style="display:flex;border-bottom:1px solid var(--border-light);">
+      <div class="gantt-row-head" style="min-height:${rowH}px;">
+        <div style="font-weight:700;font-size:14px;">${m.id}</div>
+        <div style="font-size:11px;color:var(--text-sub);margin-top:2px;">${m.person}</div>
+        <div style="margin-top:4px;">${badgeHtml(state.statuses[m.id])}</div>
+      </div>
+      <div class="gantt-timeline" style="flex:1;height:${rowH}px;">
+        ${gridLines}
+        ${todayPct!==null?`<div class="gantt-today-line" style="left:${todayPct}%;"></div>`:''}
+        ${barsHtml}
+      </div>
+    </div>`;
+  }).join('');
+
+  // 将来機種をGanttに表示（日程が設定されているもの）
+  const futureRowsHtml=state.futureModels.filter(fm=>
+    fm.sampleDeliveryDate||fm.prodFirstImplDate||fm.prodFirstAssyDate||fm.prodFirstDeliveryDate
+  ).map(fm=>{
+    const FUTURE_PHASE_DEFS=[
+      {key:'sampleDeliveryDate',label:'見本機納品',color:'#7c3aed',prevKey:null},
+      {key:'prodFirstImplDate', label:'初回実装',  color:'#15803d',prevKey:null},
+      {key:'prodFirstAssyDate', label:'初回組立',  color:'#b45309',prevKey:'prodFirstImplDate'},
+      {key:'prodFirstDeliveryDate',label:'初回納品',color:'#dc2626',prevKey:'prodFirstAssyDate'},
+    ];
+    const fbars=[];
+    FUTURE_PHASE_DEFS.forEach(def=>{
+      const endDateStr=fm[def.key]; if(!endDateStr)return;
+      const endD=new Date(endDateStr);
+      let startD;
+      if(def.prevKey&&fm[def.prevKey]) startD=new Date(fm[def.prevKey]);
+      else{ startD=new Date(endD); startD.setDate(startD.getDate()-10); }
+      if(startD<GANTT_START)startD=new Date(GANTT_START);
+      if((endD-startD)/86400000<3){startD=new Date(endD);startD.setDate(startD.getDate()-3);}
+      const sp=Math.max(0,(startD-GANTT_START)/(GANTT_TOTAL*86400000)*100);
+      const ep=datePct(endDateStr)||0;
+      fbars.push({key:def.key,label:def.label,color:def.color,startPct:sp,endPct:ep,widthPct:Math.max(ep-sp,0.8),dateStr:endDateStr,lane:0});
+    });
+    fbars.sort((a,b)=>a.startPct-b.startPct);
+    const laneE=[];
+    fbars.forEach(b=>{let l=0;while(l<laneE.length&&laneE[l]>b.startPct+0.5)l++;b.lane=l;laneE[l]=b.endPct;});
+    const maxLane=fbars.length>0?Math.max(...fbars.map(b=>b.lane)):0;
+    const rowH=TOP_PAD+(maxLane+1)*LANE_H+BOT_PAD;
+    const barsH=fbars.map(bar=>{
+      const top=TOP_PAD+bar.lane*LANE_H;
+      return`<div style="position:absolute;left:${bar.startPct.toFixed(2)}%;width:${bar.widthPct.toFixed(2)}%;top:${top}px;height:${BAR_H}px;background:${bar.color};opacity:0.45;border-radius:4px;border:2px dashed rgba(255,255,255,.6);display:flex;align-items:center;padding:0 6px;font-size:10px;font-weight:600;color:#fff;pointer-events:none;overflow:hidden;white-space:nowrap;"
+        title="${bar.label}: ${fmtD(bar.dateStr)}（将来計画）">
+        ${bar.label.replace('初回','')} ${fmtD(bar.dateStr)}
+      </div>`;
+    }).join('');
+    return`<div style="display:flex;border-bottom:1px dashed var(--border-light);background:#fafbff;">
+      <div class="gantt-row-head" style="min-height:${rowH}px;background:#f0f4ff;">
+        <div style="font-weight:700;font-size:13px;color:#2563eb;">${fm.code}</div>
+        <div style="font-size:10px;color:var(--text-sub);margin-top:2px;">${fm.name||''}</div>
+        <span class="badge badge-info" style="font-size:9px;margin-top:4px;">将来計画</span>
+      </div>
+      <div class="gantt-timeline" style="flex:1;height:${rowH}px;">
+        ${gridLines}
+        ${todayPct!==null?`<div class="gantt-today-line" style="left:${todayPct}%;"></div>`:''}
+        ${barsH}
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('page-schedule').innerHTML=`
+    <div class="page-heading">
+      <div>
+        <h2>📅 スケジュール</h2>
+        <p>2026年3月〜9月 ｜ 今日: ${fmtD(TODAY)} ｜ <strong>バー中央ドラッグ</strong>で移動 ｜ <strong>左右端ドラッグ</strong>で期間変更 ｜ 日程重複時はレーン分け表示</p>
+      </div>
+    </div>
+    <div class="gantt-container">
+      <div style="display:flex;border-bottom:2px solid var(--border);">
+        <div style="width:190px;min-width:190px;border-right:1px solid var(--border-light);padding:8px 14px;background:#f8fafc;font-size:11px;font-weight:700;color:var(--text-sub);">機種</div>
+        <div style="flex:1;display:flex;min-width:600px;">${monthHdr}</div>
+      </div>
+      <div style="min-width:790px;">
+        ${rowsHtml}
+        ${futureRowsHtml?`
+          <div style="padding:8px 14px;background:#eff6ff;border-top:2px solid #bfdbfe;font-size:11px;font-weight:700;color:#1d4ed8;">
+            🔭 将来機種計画（参考表示）
+          </div>
+          ${futureRowsHtml}
+        `:''}
+      </div>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px;color:var(--text-muted);">
+      ${PHASE_DEFS.map(p=>`<span style="display:flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:3px;background:${p.color};display:inline-block;"></span>${p.label}</span>`).join('')}
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:12px;height:12px;border-radius:3px;background:#94a3b8;display:inline-block;"></span>完了済み</span>
+      <span style="display:flex;align-items:center;gap:4px;"><span style="width:2px;height:14px;background:var(--danger);display:inline-block;"></span>今日</span>
+      <span style="color:var(--text-muted);">※ 同一機種内でスケジュールが重なる場合、バーを別レーンに表示</span>
+    </div>`;
+}
+
+/* ============================================================
+   RENDER: ECO FLOW (Drag & Drop)
+============================================================ */
+function renderEco(){
+  const machine=state.selectedMachine;
+  const eco=state.eco[machine]||{};
+  const totalInFlow=Object.entries(eco).filter(([k])=>k!=='delivered'&&k!=='newParts').reduce((a,[,v])=>a+v,0);
+  const delivered=eco.delivered||0;
+  const newParts=eco.newParts||0;
+  const assembledTotal=(eco.assembly||0)+newParts;
+  const reusePct=assembledTotal>0?Math.round((eco.assembly||0)/assembledTotal*100):0;
+  const newPct=assembledTotal>0?100-reusePct:0;
+
+  const machineSelHtml=MACHINES.map(m=>`<option value="${m.id}"${m.id===machine?' selected':''}>${m.id}</option>`).join('');
+
+  const chainHtml=ECO_STAGES.map((s,i)=>{
+    const qty=eco[s.id]||0;
+    const hasUnits=qty>0;
+    const isDelivered=s.id==='delivered';
+    const nodeClass=`eco-node${isDelivered&&hasUnits?' delivered':hasUnits?' has-units':''}`;
+    const arrow=i>0?`<div class="eco-arrow">→</div>`:'';
+    return`${arrow}
+      <div class="${nodeClass}" draggable="true"
+        data-machine="${machine}" data-stage="${s.id}"
+        ondragstart="onEcoDragStart(event)" ondragend="onEcoDragEnd(event)"
+        ondragover="onEcoDragOver(event)" ondragleave="onEcoDragLeave(event)" ondrop="onEcoDrop(event)">
+        <div style="font-size:11px;font-weight:700;">${s.label}</div>
+        <div style="font-size:10px;color:var(--text-sub);margin-bottom:6px;">${s.sub}</div>
+        <div class="eco-count" onclick="openEcoModal('${machine}','${s.id}')"
+          style="color:${hasUnits?(isDelivered?'var(--success)':'var(--primary)'):'var(--text-muted)'};"
+          title="クリックで台数編集">${qty}</div>
+        <div style="font-size:10px;color:var(--text-muted);margin-bottom:8px;">台</div>
+        <button class="btn btn-sm" onclick="openEcoModal('${machine}','${s.id}')">更新</button>
+      </div>`;
+  }).join('');
+
+  const tableRows=ECO_STAGES.map(s=>{
+    const qty=eco[s.id]||0;
+    const total=Object.entries(eco).filter(([k])=>k!=='newParts').reduce((a,[,v])=>a+v,0)||1;
+    const p=Math.round(qty/total*100);
+    return`<tr>
+      <td style="font-weight:${qty>0?'700':'400'}">${s.label}</td>
+      <td style="color:var(--text-sub);font-size:12px;">${s.company||'（自社）'}</td>
+      <td class="center mono" style="font-size:16px;font-weight:700;color:${qty>0?'var(--primary)':'var(--text-muted)'};">${qty}</td>
+      <td><div class="prog-wrap"><div class="prog-track"><div class="prog-fill" style="width:${p}%;"></div></div><span style="font-size:11px;color:var(--text-sub);min-width:30px;">${p}%</span></div></td>
+    </tr>`;
+  }).join('');
+
+  document.getElementById('page-eco').innerHTML=`
+    <div class="page-heading"><div><h2>♻️ エコフロー管理</h2><p>ノードをドラッグ&ドロップで工程間移動 ／ 台数をクリックで直接編集</p></div></div>
+    <div class="filter-bar">
+      <span style="font-size:12px;font-weight:600;">対象機種:</span>
+      <select onchange="state.selectedMachine=this.value;renderPage('eco');">${machineSelHtml}</select>
+      <span style="font-size:12px;color:var(--text-sub);">処理中: <strong>${totalInFlow}</strong>台 ／ 納品済: <strong>${delivered}</strong>台</span>
+      <div style="flex:1;"></div>
+      <button class="btn btn-sm" onclick="openMoveModal()">⇄ 工程間移動</button>
+    </div>
+    <div class="alert-bar alert-bar-info" style="margin-bottom:16px;">
+      ℹ️ 回収 → 解体（いードリーム） → E基板検査（岐阜電子）・SNB基板検査（めいこー）[並行] → 組み立て（いードリーム） → お客様納品
+    </div>
+    <div class="table-wrap" style="margin-bottom:20px;">
+      <div class="table-toolbar"><h2>フロー図 — ${machine}</h2></div>
+      <div style="padding:16px;overflow-x:auto;">
+        <div class="eco-chain">${chainHtml}</div>
+      </div>
+    </div>
+    <div class="table-wrap" style="margin-bottom:20px;">
+      <div class="table-toolbar"><h2>組立内訳 — リユース／新品</h2></div>
+      <div style="padding:16px;display:flex;gap:16px;flex-wrap:wrap;align-items:stretch;">
+        <div style="flex:1;min-width:160px;background:var(--primary-light);border:2px solid #93c5fd;border-radius:var(--radius-sm);padding:12px 10px;text-align:center;">
+          <div style="font-size:11px;font-weight:700;">♻️ リユース組立</div>
+          <div class="eco-count" onclick="openEcoModal('${machine}','assembly')" style="color:var(--primary);cursor:pointer;" title="クリックで台数編集">${eco.assembly||0}</div>
+          <div style="font-size:10px;color:var(--text-muted);">台（${reusePct}%）</div>
+        </div>
+        <div style="flex:1;min-width:160px;background:#fffbeb;border:2px solid #fcd34d;border-radius:var(--radius-sm);padding:12px 10px;text-align:center;">
+          <div style="font-size:11px;font-weight:700;">🆕 新品投入</div>
+          <div class="eco-count" onclick="openEcoModal('${machine}','newParts')" style="color:#d97706;cursor:pointer;" title="クリックで台数編集">${newParts}</div>
+          <div style="font-size:10px;color:var(--text-muted);">台（${newPct}%）</div>
+        </div>
+        <div style="flex:1;min-width:160px;background:#f8fafc;border:2px solid var(--border);border-radius:var(--radius-sm);padding:12px 10px;text-align:center;">
+          <div style="font-size:11px;font-weight:700;">組立合計</div>
+          <div class="eco-count" style="color:var(--text-sub);">${assembledTotal}</div>
+          <div style="font-size:10px;color:var(--text-muted);">台</div>
+        </div>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <div class="table-toolbar"><h2>各工程 台数明細</h2></div>
+      <table><thead><tr><th>工程</th><th>委託先</th><th class="center">台数</th><th style="min-width:160px;">構成比</th></tr></thead>
+      <tbody>${tableRows}
+        <tr>
+          <td style="font-weight:400;">🆕 新品投入</td>
+          <td style="color:var(--text-sub);font-size:12px;">（自社調達）</td>
+          <td class="center mono" style="font-size:16px;font-weight:700;color:${newParts>0?'#d97706':'var(--text-muted)'};">${newParts}</td>
+          <td style="color:var(--text-muted);font-size:11px;">組立分に含む内訳</td>
+        </tr>
+        <tr style="background:#f8fafc;">
+          <td colspan="2" style="font-weight:700;">合　計（エコ工程＋新品）</td>
+          <td class="center mono" style="font-size:16px;font-weight:700;">${Object.values(eco).reduce((a,b)=>a+b,0)}</td>
+          <td>100%</td>
+        </tr>
+      </tbody></table>
+    </div>`;
+}
+
+/* ============================================================
+   CUSTOM FLOW HELPERS
+============================================================ */
+const FLOW_COLORS=['#2563eb','#7c3aed','#0891b2','#16a34a','#d97706','#dc2626','#db2777'];
+const VENDOR_COLORS=['#2563eb','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2','#db2777'];
+
+function getFlowsForMachine(machineId){
+  if(state.customFlows&&state.customFlows[machineId]){
+    return state.customFlows[machineId];
+  }
+  const sc=state.schedules[machineId]||{};
+  return [
+    {id:'grp_sample_'+machineId,label:'見本機フロー',color:'#7c3aed',
+     vendors:[
+       {id:'v1',name:'委託先A',color:'#7c3aed',contact:'',tel:'',role:''},
+       {id:'v2',name:'委託先B',color:'#0891b2',contact:'',tel:'',role:''},
+     ],
+     steps:[
+      {id:'sampleImpl',label:'基板実装',date:sc.sampleImpl||null,done:false,dept:'',note:'',vp:{}},
+      {id:'sampleAssy', label:'組立',    date:sc.sampleAssy||null, done:false,dept:'',note:'',vp:{}},
+      {id:'sampleShip', label:'出荷',    date:sc.sampleShip||null, done:false,dept:'',note:'',vp:{}},
+    ]},
+    {id:'grp_prod_'+machineId,label:'量産フロー',color:'#2563eb',
+     vendors:[
+       {id:'v1',name:'委託先A',color:'#2563eb',contact:'',tel:'',role:''},
+       {id:'v2',name:'委託先B',color:'#16a34a',contact:'',tel:'',role:''},
+     ],
+     steps:[
+      {id:'prodImpl',label:'基板実装',date:sc.prodImpl||null,done:false,dept:'',note:'',vp:{}},
+      {id:'prodAssy', label:'組立',    date:sc.prodAssy||null, done:false,dept:'',note:'',vp:{}},
+      {id:'prodShip', label:'出荷',    date:sc.prodShip||null, done:false,dept:'',note:'',vp:{}},
+    ]},
+  ];
+}
+
+function saveFlowForMachine(machineId,groups){
+  if(!state.customFlows)state.customFlows={};
+  state.customFlows[machineId]=groups;
+  saveToGAS();
+}
+
+function addFlowGroup(machineId){
+  const groups=getFlowsForMachine(machineId);
+  const color=FLOW_COLORS[groups.length%FLOW_COLORS.length];
+  const newGrp={
+    id:'grp_'+Date.now(),label:'フロー '+(groups.length+1),color,
+    vendors:[
+      {id:'v1',name:'委託先A',color:VENDOR_COLORS[0],contact:'',tel:'',role:''},
+      {id:'v2',name:'委託先B',color:VENDOR_COLORS[1],contact:'',tel:'',role:''},
+    ],
+    steps:[{id:'step_'+Date.now(),label:'工程 1',date:null,done:false,dept:'',note:'',vp:{}}]
+  };
+  groups.push(newGrp);
+  saveFlowForMachine(machineId,groups);
+  addLog(machineId+' 新規フロー追加');
+  renderPage('flow');
+}
+
+function deleteFlowGroup(machineId,groupId){
+  const groups=getFlowsForMachine(machineId);
+  if(groups.length<=1){showToast('最後のフローは削除できません');return;}
+  if(!confirm('このフローを削除しますか?'))return;
+  const idx=groups.findIndex(g=>g.id===groupId);
+  if(idx>=0)groups.splice(idx,1);
+  saveFlowForMachine(machineId,groups);
+  addLog(machineId+' フロー削除');
+  renderPage('flow');
+}
+
+function addFlowStep(machineId,groupId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  const newId='step_'+Date.now();
+  grp.steps.push({id:newId,label:'工程 '+(grp.steps.length+1),date:null,done:false,dept:'',note:'',vp:{}});
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+function deleteFlowStep(machineId,groupId,stepId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  if(grp.steps.length<=1){showToast('最後のステップは削除できません');return;}
+  if(!confirm('この工程を削除しますか?'))return;
+  grp.steps=grp.steps.filter(s=>s.id!==stepId);
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+// ---- Vendor management ----
+function addVendorToGroup(machineId,groupId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  if(!grp.vendors)grp.vendors=[];
+  const color=VENDOR_COLORS[grp.vendors.length%VENDOR_COLORS.length];
+  const vid='v'+Date.now();
+  grp.vendors.push({id:vid,name:'委託先'+(grp.vendors.length+1),color,contact:'',tel:'',role:''});
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+function removeVendorFromGroup(machineId,groupId,vendorId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp||!grp.vendors)return;
+  if(grp.vendors.length<=1){showToast('最低1社の委託先が必要です');return;}
+  if(!confirm('この委託先を削除しますか? 進捗データも消去されます。'))return;
+  grp.vendors=grp.vendors.filter(v=>v.id!==vendorId);
+  grp.steps.forEach(s=>{if(s.vp)delete s.vp[vendorId];});
+  saveFlowForMachine(machineId,groups);
+  renderPage('flow');
+}
+
+function openVendorEditModal(machineId,groupId,vendorId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const v=grp&&grp.vendors?grp.vendors.find(x=>x.id===vendorId):null;
+  document.getElementById('ve-machine').value=machineId;
+  document.getElementById('ve-group').value=groupId;
+  document.getElementById('ve-vendor').value=vendorId||'';
+  document.getElementById('ve-name').value=v?v.name:'';
+  document.getElementById('ve-color').value=v?v.color:'#2563eb';
+  document.getElementById('ve-contact').value=v?v.contact||'':'';
+  document.getElementById('ve-tel').value=v?v.tel||'':'';
+  document.getElementById('ve-role').value=v?v.role||'':'';
+  document.getElementById('vendor-edit-title').textContent=vendorId?`委託先編集: ${v?v.name:''}` :'委託先追加';
+  document.getElementById('vendor-edit-modal').style.display='flex';
+}
+function closeVendorEditModal(){document.getElementById('vendor-edit-modal').style.display='none';}
+function saveVendorEditModal(){
+  const machineId=document.getElementById('ve-machine').value;
+  const groupId=document.getElementById('ve-group').value;
+  const vendorId=document.getElementById('ve-vendor').value;
+  const name=document.getElementById('ve-name').value.trim();
+  if(!name){showToast('⚠️ 委託先名を入力してください');return;}
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  if(!grp.vendors)grp.vendors=[];
+  const obj={
+    id:vendorId||'v'+Date.now(), name,
+    color:document.getElementById('ve-color').value,
+    contact:document.getElementById('ve-contact').value.trim(),
+    tel:document.getElementById('ve-tel').value.trim(),
+    role:document.getElementById('ve-role').value.trim(),
+  };
+  const idx=grp.vendors.findIndex(v=>v.id===vendorId);
+  if(idx>=0)grp.vendors[idx]=obj; else grp.vendors.push(obj);
+  saveFlowForMachine(machineId,groups);
+  closeVendorEditModal();
+  renderPage('flow');
+  showToast(`✅ ${name} を保存しました`);
+}
+
+// ---- Vendor Progress Modal ----
+function openVpModal(machineId,groupId,stepId,vendorId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const step=grp&&grp.steps?grp.steps.find(s=>s.id===stepId):null;
+  const vendor=grp&&grp.vendors?grp.vendors.find(v=>v.id===vendorId):null;
+  const vp=(step&&step.vp&&step.vp[vendorId])||{pct:0,status:'notstarted',date:'',person:'',note:''};
+  document.getElementById('vp-machine').value=machineId;
+  document.getElementById('vp-group').value=groupId;
+  document.getElementById('vp-step').value=stepId;
+  document.getElementById('vp-vendor').value=vendorId;
+  document.getElementById('vp-pct-range').value=vp.pct||0;
+  document.getElementById('vp-pct-num').value=vp.pct||0;
+  document.getElementById('vp-status').value=vp.status||'notstarted';
+  document.getElementById('vp-date').value=vp.date||'';
+  document.getElementById('vp-person').value=vp.person||'';
+  document.getElementById('vp-note').value=vp.note||'';
+  const vName=vendor?vendor.name:'委託先';
+  const sName=step?step.label:'工程';
+  document.getElementById('vp-modal-title').textContent=`${vName} / ${sName} — 進捗更新`;
+  document.getElementById('vp-modal').style.display='flex';
+}
+function closeVpModal(){document.getElementById('vp-modal').style.display='none';}
+function saveVpModal(){
+  const machineId=document.getElementById('vp-machine').value;
+  const groupId=document.getElementById('vp-group').value;
+  const stepId=document.getElementById('vp-step').value;
+  const vendorId=document.getElementById('vp-vendor').value;
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const step=grp&&grp.steps?grp.steps.find(s=>s.id===stepId):null;
+  if(!step)return;
+  if(!step.vp)step.vp={};
+  step.vp[vendorId]={
+    pct:parseInt(document.getElementById('vp-pct-num').value)||0,
+    status:document.getElementById('vp-status').value,
+    date:document.getElementById('vp-date').value,
+    person:document.getElementById('vp-person').value.trim(),
+    note:document.getElementById('vp-note').value.trim(),
+  };
+  saveFlowForMachine(machineId,groups);
+  closeVpModal();
+  renderPage('flow');
+  showToast('✅ 進捗を保存しました');
+}
+
+// ---- Step Detail Modal ----
+function openStepDetailModal(machineId,groupId,stepId){
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const step=grp&&grp.steps?grp.steps.find(s=>s.id===stepId):null;
+  if(!step)return;
+  document.getElementById('sdm-machine').value=machineId;
+  document.getElementById('sdm-group').value=groupId;
+  document.getElementById('sdm-step').value=stepId;
+  document.getElementById('sdm-label').value=step.label||'';
+  document.getElementById('sdm-date').value=step.date||'';
+  document.getElementById('sdm-dept').value=step.dept||'';
+  document.getElementById('sdm-done').value=step.done?'true':'false';
+  document.getElementById('sdm-note').value=step.note||'';
+  document.getElementById('sdm-title').textContent=`工程詳細: ${step.label}`;
+  document.getElementById('step-detail-modal').style.display='flex';
+}
+function closeStepDetailModal(){document.getElementById('step-detail-modal').style.display='none';}
+function saveStepDetailModal(){
+  const machineId=document.getElementById('sdm-machine').value;
+  const groupId=document.getElementById('sdm-group').value;
+  const stepId=document.getElementById('sdm-step').value;
+  const label=document.getElementById('sdm-label').value.trim();
+  if(!label){showToast('⚠️ 工程名を入力してください');return;}
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  const step=grp&&grp.steps?grp.steps.find(s=>s.id===stepId):null;
+  if(!step)return;
+  step.label=label;
+  step.date=document.getElementById('sdm-date').value||null;
+  step.dept=document.getElementById('sdm-dept').value.trim();
+  step.done=document.getElementById('sdm-done').value==='true';
+  step.note=document.getElementById('sdm-note').value.trim();
+  saveFlowForMachine(machineId,groups);
+  closeStepDetailModal();
+  renderPage('flow');
+  showToast(`✅ 工程「${label}」を保存しました`);
+}
+
+// Inline group label edit
+function startEditFlowGroupLabel(e,machineId,groupId){
+  e.stopPropagation();
+  const span=e.currentTarget;
+  const groups=getFlowsForMachine(machineId);
+  const grp=groups.find(g=>g.id===groupId);
+  if(!grp)return;
+  const input=document.createElement('input');
+  input.type='text';input.value=grp.label;
+  input.style.cssText='font-size:13px;font-weight:700;padding:2px 6px;border:1px solid var(--primary);border-radius:4px;width:200px;';
+  span.replaceWith(input);input.focus();input.select();
+  const commit=()=>{grp.label=input.value.trim()||grp.label;saveFlowForMachine(machineId,groups);renderPage('flow');};
+  input.onblur=commit;input.onkeydown=e2=>{if(e2.key==='Enter')commit();if(e2.key==='Escape')renderPage('flow');};
+}
+
+function renderFutureFlowView(fm){
+  const today=new Date(); today.setHours(0,0,0,0);
+  const fmtFD=v=>{if(!v)return'<span style="color:var(--text-muted);">未設定</span>';
+    const d=new Date(v);const diff=Math.ceil((d-today)/86400000);
+    let col=diff<0?'var(--text-muted)':diff<=14?'var(--danger)':diff<=30?'var(--warning)':'var(--primary)';
+    return`<span style="font-weight:700;color:${col};font-family:monospace;">${d.getFullYear()}/${d.getMonth()+1}/${d.getDate()}${diff>=0?` (あと${diff}日)`:' (過去)'}</span>`;
+  };
+  const machineBtnsHtml=MACHINES.map(x=>`
+    <button class="btn btn-sm" onclick="state.flowMachine='${x.id}';renderPage('flow');">${x.id}</button>`).join('')+
+    (state.futureModels.length?`<span style="color:var(--text-muted);font-size:11px;align-self:center;margin-left:4px;">│</span>`:'')
+    +state.futureModels.map(x=>`
+    <button class="btn btn-sm ${x.id===fm.id?'btn-primary':''}"
+      style="${x.id!==fm.id?'background:#eff6ff;color:#2563eb;border-color:#bfdbfe;':''}"
+      onclick="state.flowMachine='${x.id}';renderPage('flow');">
+      <span style="font-size:9px;background:#2563eb;color:#fff;border-radius:3px;padding:0 3px;margin-right:2px;">将</span>${x.code}
+    </button>`).join('');
+
+  const compColor=fm.complianceStatus==='承認済'?'#16a34a':fm.complianceStatus==='申請中'?'#d97706':'#64748b';
+  const section=(title,color,content)=>`
+    <div style="background:var(--card);border:1px solid var(--border-light);border-radius:var(--radius);margin-bottom:12px;overflow:hidden;">
+      <div style="background:${color};padding:8px 16px;color:#fff;font-size:12px;font-weight:700;">${title}</div>
+      <div style="padding:14px 18px;">${content}</div>
+    </div>`;
+  const row2=(l1,v1,l2,v2)=>`<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px;">
+    <div><div style="font-size:10px;color:var(--text-sub);margin-bottom:2px;">${l1}</div><div style="font-size:12px;">${v1}</div></div>
+    <div><div style="font-size:10px;color:var(--text-sub);margin-bottom:2px;">${l2}</div><div style="font-size:12px;">${v2}</div></div>
+  </div>`;
+
+  document.getElementById('page-flow').innerHTML=`
+    <div class="page-heading">
+      <div><h2>🔄 業務フロー</h2></div>
+      <button class="btn btn-primary btn-sm" onclick="openFutureEditModal('${fm.id}')">✏️ 将来機種 編集</button>
+    </div>
+    <div class="filter-bar" style="flex-wrap:wrap;gap:6px;">${machineBtnsHtml}</div>
+    <div class="table-wrap" style="margin-bottom:16px;">
+      <div class="table-toolbar">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span style="font-size:9px;background:#2563eb;color:#fff;border-radius:4px;padding:1px 6px;font-weight:700;">将来計画</span>
+          <strong style="font-size:14px;">${fm.code}</strong>
+          <span style="font-size:12px;color:var(--text-sub);">${fm.name||''}</span>
+          <span style="font-weight:700;color:${compColor};">${fm.complianceStatus||''}</span>
+        </div>
+      </div>
+    </div>
+
+    ${section('📋 基本情報','#2563eb',
+      row2('販売予定日',fmtFD(fm.salesDate),'適合日',fmtFD(fm.complianceDate))+
+      row2('適合状況',fm.complianceStatus?`<span style="font-weight:700;color:${compColor};">${fm.complianceStatus}</span>`:'—','12Dコード',fm.code12D||'—')+
+      row2('生産計画日',fmtFD(fm.productionPlanDate),'材料手配日',fmtFD(fm.materialDate))+
+      row2('実装手配日',fmtFD(fm.mountingDate),'ホール導入日',fmtFD(fm.hallDate))
+    )}
+
+    ${section('🔬 見本機','#16a34a',
+      row2('初回納品日',fmtFD(fm.sampleDeliveryDate),'基板',fm.sampleBoard||'—')+
+      row2('基板種類',fm.sampleBoardType||'—','','')
+    )}
+
+    ${section('⚙️ 量産','#d97706',
+      row2('初回実装日',fmtFD(fm.prodFirstImplDate),'初回組立日',fmtFD(fm.prodFirstAssyDate))+
+      row2('初回納品日',fmtFD(fm.prodFirstDeliveryDate),'納入日（手配）',fmtFD(fm.deliveryDate))+
+      row2('量産台数',fm.prodQtyActual||'—','ロム種類',fm.prodRomType||'—')+
+      (fm.prodMemo?`<div style="font-size:12px;color:var(--text-sub);margin-top:6px;">備考: ${fm.prodMemo}</div>`:'')
+    )}
+
+    ${renderEstimatesSectionFlow(fm.code)}
+    ${renderDriveFilesSection(fm.id)}
+    <div style="text-align:center;margin-top:16px;">
+      <button class="btn btn-primary" onclick="openFutureEditModal('${fm.id}')">✏️ この機種を編集</button>
+      <button class="btn" style="margin-left:8px;" onclick="openGcalModal('${fm.code}')">📅 カレンダー登録</button>
+    </div>`;
+}
+
+function renderFlow(){
+  const selId=state.flowMachine||MACHINES[0].id;
+  // 将来機種が選択された場合は専用ビューへ
+  const futureMachine=state.futureModels.find(x=>x.id===selId);
+  if(futureMachine){renderFutureFlowView(futureMachine);return;}
+  const m=MACHINES.find(x=>x.id===selId);
+  const status=state.statuses[selId];
+  const groups=getFlowsForMachine(selId);
+
+  const machineBtnsHtml=MACHINES.map(x=>`
+    <button class="btn btn-sm ${x.id===selId?'btn-primary':''}"
+      onclick="state.flowMachine='${x.id}';renderPage('flow');">${x.id}</button>`).join('')+
+    (state.futureModels.length?`<span style="color:var(--text-muted);font-size:11px;align-self:center;margin-left:4px;">│</span>`:'')
+    +state.futureModels.map(fm=>`
+    <button class="btn btn-sm ${fm.id===selId?'btn-primary':''}"
+      style="${fm.id!==selId?'background:#eff6ff;color:#2563eb;border-color:#bfdbfe;':''}"
+      onclick="state.flowMachine='${fm.id}';renderPage('flow');">
+      <span style="font-size:9px;background:#2563eb;color:#fff;border-radius:3px;padding:0 3px;margin-right:2px;">将</span>${fm.code}
+    </button>`).join('');
+
+  const VP_STATUS_ICON={notstarted:'⏳',inprogress:'🔄',done:'✅',hold:'⏸',issue:'⚠️'};
+  const VP_STATUS_COLOR={notstarted:'var(--text-muted)',inprogress:'var(--primary)',done:'var(--success)',hold:'var(--warning)',issue:'var(--danger)'};
+
+  function vendorCellHtml(step,vendor){
+    const vp=(step.vp&&step.vp[vendor.id])||{pct:0,status:'notstarted',date:'',person:'',note:''};
+    const icon=VP_STATUS_ICON[vp.status]||'⏳';
+    const color=VP_STATUS_COLOR[vp.status]||'var(--text-muted)';
+    const pct=vp.pct||0;
+    return `<td class="vendor-cell" onclick="openVpModal('${selId}','${step._grpId||''}','${step.id}','${vendor.id}')" style="cursor:pointer;transition:background .15s;" onmouseover="this.style.background='#f0f4ff'" onmouseout="this.style.background=''">
+      <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
+        <span style="font-size:14px;">${icon}</span>
+        <span style="font-size:11px;font-weight:600;color:${color};">${pct}%</span>
+        ${vp.person?`<span style="font-size:10px;color:var(--text-sub);">${vp.person}</span>`:''}
+      </div>
+      <div class="vp-bar-wrap"><div class="vp-bar-fill" style="width:${pct}%;background:${vendor.color};"></div></div>
+      ${vp.date?`<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">📅 ${fmtD(vp.date)}</div>`:''}
+      ${vp.note?`<div style="font-size:10px;color:var(--text-sub);margin-top:2px;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${vp.note}">💬 ${vp.note}</div>`:''}
+    </td>`;
+  }
+
+  const groupsHtml=groups.map(grp=>{
+    if(!grp.vendors||!grp.vendors.length)grp.vendors=[
+      {id:'v1',name:'委託先A',color:grp.color||'#2563eb',contact:'',tel:'',role:''},
+      {id:'v2',name:'委託先B',color:'#16a34a',contact:'',tel:'',role:''},
+    ];
+    const vendors=grp.vendors;
+
+    // Overall done count: step done if done flag OR all vendors >=100% OR done status
+    const doneCount=grp.steps.filter(s=>{
+      if(s.done)return true;
+      if(!vendors.length)return isPast(s.date);
+      return vendors.every(v=>(s.vp&&s.vp[v.id]&&(s.vp[v.id].status==='done'||s.vp[v.id].pct>=100)));
+    }).length;
+    const pct=grp.steps.length>0?Math.round(doneCount/grp.steps.length*100):0;
+
+    const vendorHeaderCols=vendors.map(v=>`
+      <th style="background:${v.color}22;min-width:170px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;">
+          <div style="display:flex;align-items:center;gap:5px;">
+            <span style="width:8px;height:8px;border-radius:50%;background:${v.color};flex-shrink:0;display:inline-block;"></span>
+            <span style="cursor:pointer;" onclick="openVendorEditModal('${selId}','${grp.id}','${v.id}')">${v.name}</span>
+          </div>
+          <div style="display:flex;gap:3px;">
+            <button class="btn btn-sm" style="padding:1px 5px;font-size:10px;" onclick="openVendorEditModal('${selId}','${grp.id}','${v.id}')">✏️</button>
+            <button class="btn btn-sm" style="padding:1px 5px;font-size:10px;color:var(--danger);" onclick="removeVendorFromGroup('${selId}','${grp.id}','${v.id}')">✕</button>
+          </div>
+        </div>
+        ${v.role?`<div style="font-size:9px;color:var(--text-sub);font-weight:400;margin-top:2px;">${v.role}</div>`:''}
+        ${v.contact?`<div style="font-size:9px;color:var(--text-sub);font-weight:400;">${v.contact}${v.tel?' / '+v.tel:''}</div>`:''}
+      </th>`).join('');
+
+    const stepsRows=grp.steps.map((s,si)=>{
+      s._grpId=grp.id;
+      const allDone=s.done||vendors.every(v=>(s.vp&&s.vp[v.id]&&(s.vp[v.id].status==='done'||s.vp[v.id].pct>=100)));
+      const hasIssue=vendors.some(v=>(s.vp&&s.vp[v.id]&&s.vp[v.id].status==='issue'));
+      const rowClass=allDone?'step-done-row':hasIssue?'step-near-row':'tbl-step-row';
+      const d=s.date;
+      const diff=getDiff(d);
+      const dateColor=allDone?'var(--success)':isNear(d)?'var(--warning)':isPast(d)&&!allDone?'var(--danger)':'var(--text-sub)';
+      const vendorCells=vendors.map(v=>vendorCellHtml(s,v)).join('');
+      return `<tr class="${rowClass}">
+        <td style="width:28px;text-align:center;color:var(--text-muted);font-size:11px;font-weight:700;">${si+1}</td>
+        <td>
+          <div class="flow-step-name-cell" onclick="openStepDetailModal('${selId}','${grp.id}','${s.id}')">
+            <span style="font-size:14px;">${allDone?'✅':hasIssue?'⚠️':'🔄'}</span>
+            <span>${s.label}</span>
+            <span class="edit-hint">✏️</span>
+          </div>
+          ${s.dept?`<div style="font-size:10px;color:var(--text-muted);margin-top:2px;">${s.dept}</div>`:''}
+          ${s.note?`<div style="font-size:10px;color:var(--text-sub);margin-top:2px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${s.note}">💬 ${s.note}</div>`:''}
+        </td>
+        <td style="white-space:nowrap;">
+          ${d?`<span style="font-family:monospace;font-size:11px;color:${dateColor};">${fmtD(d)}</span><br><span style="font-size:10px;color:${dateColor};">${allDone?'完了':diff!==null?(diff<0?`${Math.abs(diff)}日超過`:`あと${diff}日`):''}  </span>`:'<span style="color:var(--text-muted);font-size:11px;">—</span>'}
+        </td>
+        ${vendorCells}
+        <td style="white-space:nowrap;width:80px;">
+          <button class="btn btn-sm" style="padding:2px 6px;font-size:10px;" onclick="openStepDetailModal('${selId}','${grp.id}','${s.id}')">詳細</button>
+          <button class="btn btn-sm" style="padding:2px 6px;font-size:10px;color:var(--danger);margin-top:3px;" onclick="deleteFlowStep('${selId}','${grp.id}','${s.id}')">削除</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="flow-group-card">
+      <div class="flow-group-header">
+        <div class="flow-group-title">
+          <div class="flow-group-color-dot" style="background:${grp.color};"></div>
+          <span class="flow-group-title-text" onclick="startEditFlowGroupLabel(event,'${selId}','${grp.id}')" title="クリックで名称変更">${grp.label}</span>
+          <span style="font-size:11px;font-weight:400;color:var(--text-muted);">${doneCount}/${grp.steps.length} 完了</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="prog-wrap" style="width:120px;">
+            <div class="prog-track"><div class="prog-fill" style="width:${pct}%;background:${grp.color||'var(--primary)'}"></div></div>
+            <span style="font-size:11px;color:var(--text-sub);min-width:34px;">${pct}%</span>
+          </div>
+          <button class="btn btn-sm btn-danger" onclick="deleteFlowGroup('${selId}','${grp.id}')">フロー削除</button>
+        </div>
+      </div>
+      <div class="vendor-mgmt-bar">
+        <span style="font-size:10px;font-weight:700;color:var(--text-muted);letter-spacing:.06em;">委託先：</span>
+        ${vendors.map(v=>`<span class="vendor-edit-chip" style="background:${v.color};" onclick="openVendorEditModal('${selId}','${grp.id}','${v.id}')">${v.name}${v.role?` (${v.role})`:''}</span>`).join('')}
+        <button class="btn btn-sm" style="padding:2px 10px;font-size:10px;" onclick="addVendorToGroup('${selId}','${grp.id}')">＋ 委託先追加</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="flow-tbl">
+          <thead><tr>
+            <th style="width:28px;">#</th>
+            <th>工程名</th>
+            <th style="min-width:90px;">予定日</th>
+            ${vendorHeaderCols}
+            <th style="width:80px;">操作</th>
+          </tr></thead>
+          <tbody>${stepsRows}</tbody>
+        </table>
+      </div>
+      <div style="padding:10px 16px;border-top:1px solid var(--border-light);">
+        <button class="btn btn-sm" onclick="addFlowStep('${selId}','${grp.id}')">＋ 工程追加</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('page-flow').innerHTML=`
+    <div class="page-heading">
+      <div><h2>🔄 業務フロー</h2><p>機種ごとに工程・委託先を管理 ／ 工程名クリックで詳細編集・委託先セルクリックで進捗更新</p></div>
+      <button class="btn btn-primary btn-sm" onclick="addFlowGroup('${selId}')">＋ フロー追加</button>
+    </div>
+    <div class="filter-bar" style="flex-wrap:wrap;gap:6px;">${machineBtnsHtml}</div>
+    <div class="table-wrap" style="margin-bottom:16px;">
+      <div class="table-toolbar">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <strong style="font-size:14px;">【 ${m.id} 】</strong>
+          <span style="font-size:12px;color:var(--text-sub);">${m.person} 担当</span>
+          ${badgeHtml(status)}
+          ${m.compliance?`<span class="badge badge-info">${m.compliance}</span>`:''}
+          <span style="font-size:12px;color:var(--text-sub);">量産 <strong>${m.prodQty}</strong> 台</span>
+        </div>
+        <button class="btn btn-sm" onclick="openEditModal('${m.id}')">✏️ 機種編集</button>
+      </div>
+    </div>
+    ${renderMilestoneSection(selId)}
+    ${renderEstimatesSectionFlow(selId)}
+    ${groupsHtml}
+    ${renderDdocSection(selId)}
+    ${renderDriveFilesSection(selId)}
+    <div class="table-wrap" style="margin-top:4px;">
+      <div style="padding:16px 20px;">
+        <div class="detail-section" style="margin-bottom:0;"><h4>備考・メモ</h4>
+          <div style="background:var(--bg);border:1px solid var(--border-light);border-radius:var(--radius-sm);padding:12px;font-size:13px;line-height:1.8;min-height:60px;" contenteditable="true"
+            onblur="state.notes['${selId}']=this.textContent.trim();saveToGAS();">
+            ${state.notes[selId]||'<span style="color:var(--text-muted);">（クリックして入力）</span>'}
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+</script>
