@@ -1154,6 +1154,90 @@ function handleBoardDriveUpload(event,model){
   reader.readAsDataURL(file);
 }
 
+
+/* ============================================================
+   値上げインパクト（部品原価改定 → 基板 → 機種別・利益低下）
+   ※ 基板【改定前】202606〜シート および 機種別・基板マスタ表(GAS管理)
+      から算出したスナップショットを静的データとして保持。
+      最新化する場合はこの PRICE_IMPACT_DATA を差し替える。
+============================================================ */
+const PRICE_IMPACT_DATA = {"grand_total":1312521478.0,"board_totals":{"M2402A":104509187.99999999,"C2401A":68970149.99999999,"D2101A":846961610.0000001,"E2101B":138179780.0,"DE2101A1":29286810.000000004,"M2503A":31918040.0,"E2301B":35372400.0,"E2501B":57323500.0},"machines":[{"name":"e:D61","qty":12000.0,"impact":180149400.0,"detail":[{"cat":"主基板","board":"三球(FJ+M2422B)","before":0.0,"after":0.0,"delta":0.0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":17609399.999999996},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":93243480.00000001},{"cat":"演出基板(E)","board":"E2101B","before":700.0,"after":5464.82,"delta":4764.82,"impact":57177840.0},{"cat":"液晶IF基板(DE)","board":"DE2101A1","before":297.0,"after":1306.89,"delta":1009.8900000000001,"impact":12118680.000000002}]},{"name":"e:C47","qty":7000.0,"impact":105087150.0,"detail":[{"cat":"主基板","board":"M2401A","before":838.0,"after":null,"delta":0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":10272149.999999998},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":54392030.00000001},{"cat":"演出基板(E)","board":"E2101B","before":700.0,"after":5464.82,"delta":4764.82,"impact":33353739.999999996},{"cat":"液晶IF基板(DE)","board":"DE2101A1","before":297.0,"after":1306.89,"delta":1009.8900000000001,"impact":7069230.000000001}]},{"name":"e:A88","qty":12000.0,"impact":98217720.00000001,"detail":[{"cat":"主基板","board":"M2503A","before":686.0,"after":1100.52,"delta":414.52,"impact":4974240.0},{"cat":"払出基板","board":"C2501C","before":919.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":93243480.00000001},{"cat":"演出基板(E)","board":"E2503B","before":699.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE2502A","before":268.0,"after":null,"delta":0,"impact":0.0}]},{"name":"e:A89","qty":12000.0,"impact":98217720.00000001,"detail":[{"cat":"主基板","board":"M2503A","before":686.0,"after":1100.52,"delta":414.52,"impact":4974240.0},{"cat":"払出基板","board":"C2501C","before":919.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":93243480.00000001},{"cat":"演出基板(E)","board":"E2503B","before":699.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE2502A","before":268.0,"after":null,"delta":0,"impact":0.0}]},{"name":"L:E60","qty":10000.0,"impact":92915300.00000001,"detail":[{"cat":"主基板","board":"M2402A","before":874.0,"after":2395.24,"delta":1521.2399999999998,"impact":15212399.999999998},{"cat":"払出基板","board":"C2502A","before":566.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":77702900.00000001},{"cat":"演出基板(E)","board":"E2102B","before":858.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE1802A","before":280.0,"after":null,"delta":0,"impact":0.0}]},{"name":"L:E65","qty":10000.0,"impact":92915300.00000001,"detail":[{"cat":"主基板","board":"M2402A","before":874.0,"after":2395.24,"delta":1521.2399999999998,"impact":15212399.999999998},{"cat":"払出基板","board":"C2502A","before":566.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":77702900.00000001},{"cat":"演出基板(E)","board":"E2102B","before":858.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE1802A","before":280.0,"after":null,"delta":0,"impact":0.0}]},{"name":"L:E64","qty":8000.0,"impact":74332240.0,"detail":[{"cat":"主基板","board":"M2402A","before":874.0,"after":2395.24,"delta":1521.2399999999998,"impact":12169919.999999998},{"cat":"払出基板","board":"C2502A","before":566.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":62162320.00000001},{"cat":"演出基板(E)","board":"E2102B","before":858.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE1802A","before":280.0,"after":null,"delta":0,"impact":0.0}]},{"name":"L:E65","qty":8000.0,"impact":74332240.0,"detail":[{"cat":"主基板","board":"M2402A","before":874.0,"after":2395.24,"delta":1521.2399999999998,"impact":12169919.999999998},{"cat":"払出基板","board":"C2502A","before":566.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":62162320.00000001},{"cat":"演出基板(E)","board":"E2102B","before":858.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE1802A","before":280.0,"after":null,"delta":0,"impact":0.0}]},{"name":"L:E66","qty":8000.0,"impact":74332240.0,"detail":[{"cat":"主基板","board":"M2402A","before":874.0,"after":2395.24,"delta":1521.2399999999998,"impact":12169919.999999998},{"cat":"払出基板","board":"C2502A","before":566.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":62162320.00000001},{"cat":"演出基板(E)","board":"E2102B","before":858.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE1802A","before":280.0,"after":null,"delta":0,"impact":0.0}]},{"name":"e:D62","qty":8000.0,"impact":65478480.00000001,"detail":[{"cat":"主基板","board":"M2503A","before":686.0,"after":1100.52,"delta":414.52,"impact":3316160.0},{"cat":"払出基板","board":"C2501C","before":919.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":62162320.00000001},{"cat":"演出基板(E)","board":"E2503B","before":699.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE2502A","before":268.0,"after":null,"delta":0,"impact":0.0}]},{"name":"e:D63","qty":20000.0,"impact":54149200.0,"detail":[{"cat":"主基板","board":"M2503A","before":686.0,"after":1100.52,"delta":414.52,"impact":8290400.0},{"cat":"払出基板","board":"C2501C","before":919.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"SNB5163A-00","before":5080.0,"after":null,"delta":0,"impact":0.0},{"cat":"演出基板(E)","board":"E2501B","before":620.0,"after":2912.94,"delta":2292.94,"impact":45858800.0},{"cat":"液晶IF基板(DE)","board":"なし","before":0.0,"after":0.0,"delta":0.0,"impact":0.0}]},{"name":"e:A85B","qty":3000.0,"impact":45037350.0,"detail":[{"cat":"主基板","board":"M2401A","before":838.0,"after":null,"delta":0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":4402349.999999999},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":23310870.000000004},{"cat":"演出基板(E)","board":"E2101B","before":700.0,"after":5464.82,"delta":4764.82,"impact":14294460.0},{"cat":"液晶IF基板(DE)","board":"DE2101A1","before":297.0,"after":1306.89,"delta":1009.8900000000001,"impact":3029670.0000000005}]},{"name":"e:A85甘","qty":3000.0,"impact":45037350.0,"detail":[{"cat":"主基板","board":"M2401A","before":838.0,"after":null,"delta":0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":4402349.999999999},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":23310870.000000004},{"cat":"演出基板(E)","board":"E2101B","before":700.0,"after":5464.82,"delta":4764.82,"impact":14294460.0},{"cat":"液晶IF基板(DE)","board":"DE2101A1","before":297.0,"after":1306.89,"delta":1009.8900000000001,"impact":3029670.0000000005}]},{"name":"L:NA09","qty":4000.0,"impact":43035920.0,"detail":[{"cat":"主基板","board":"M2402A","before":874.0,"after":2395.24,"delta":1521.2399999999998,"impact":6084959.999999999},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":5869799.999999999},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":31081160.000000004},{"cat":"演出基板(E)","board":"E2102B","before":858.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE1802A","before":280.0,"after":null,"delta":0,"impact":0.0}]},{"name":"e:A84B","qty":8000.0,"impact":31952400.0,"detail":[{"cat":"主基板","board":"M2401A","before":838.0,"after":null,"delta":0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":11739599.999999998},{"cat":"液晶制御(D)","board":"SNB5163A-00","before":5080.0,"after":null,"delta":0,"impact":0.0},{"cat":"演出基板(E)","board":"E2301B","before":661.0,"after":3187.6,"delta":2526.6,"impact":20212800.0},{"cat":"液晶IF基板(DE)","board":"なし","before":0.0,"after":0.0,"delta":0.0,"impact":0.0}]},{"name":"L:E62","qty":12700.0,"impact":19319747.999999996,"detail":[{"cat":"主基板","board":"M2402A","before":874.0,"after":2395.24,"delta":1521.2399999999998,"impact":19319747.999999996},{"cat":"払出基板","board":"C2101B","before":559.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D1401C","before":null,"after":null,"delta":0,"impact":0.0},{"cat":"演出基板(E)","board":"E2102B","before":858.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE1802A","before":280.0,"after":null,"delta":0,"impact":0.0}]},{"name":"e:A84C","qty":4000.0,"impact":15976200.0,"detail":[{"cat":"主基板","board":"M2401A","before":838.0,"after":null,"delta":0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":5869799.999999999},{"cat":"液晶制御(D)","board":"SNB5163A-00","before":5080.0,"after":null,"delta":0,"impact":0.0},{"cat":"演出基板(E)","board":"E2301B","before":661.0,"after":3187.6,"delta":2526.6,"impact":10106400.0},{"cat":"液晶IF基板(DE)","board":"なし","before":0.0,"after":0.0,"delta":0.0,"impact":0.0}]},{"name":"e:C46C","qty":1000.0,"impact":15012450.0,"detail":[{"cat":"主基板","board":"M2401A","before":838.0,"after":null,"delta":0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":1467449.9999999998},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":7770290.000000001},{"cat":"演出基板(E)","board":"E2101B","before":700.0,"after":5464.82,"delta":4764.82,"impact":4764820.0},{"cat":"液晶IF基板(DE)","board":"DE2101A1","before":297.0,"after":1306.89,"delta":1009.8900000000001,"impact":1009890.0000000001}]},{"name":"e:A85甘","qty":1000.0,"impact":15012450.0,"detail":[{"cat":"主基板","board":"M2401A","before":838.0,"after":null,"delta":0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":1467449.9999999998},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":7770290.000000001},{"cat":"演出基板(E)","board":"E2101B","before":700.0,"after":5464.82,"delta":4764.82,"impact":4764820.0},{"cat":"液晶IF基板(DE)","board":"DE2101A1","before":297.0,"after":1306.89,"delta":1009.8900000000001,"impact":1009890.0000000001}]},{"name":"e:A86甘","qty":1000.0,"impact":15012450.0,"detail":[{"cat":"主基板","board":"三球","before":0.0,"after":0.0,"delta":0.0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":1467449.9999999998},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":7770290.000000001},{"cat":"演出基板(E)","board":"E2101B","before":700.0,"after":5464.82,"delta":4764.82,"impact":4764820.0},{"cat":"液晶IF基板(DE)","board":"DE2101A1","before":297.0,"after":1306.89,"delta":1009.8900000000001,"impact":1009890.0000000001}]},{"name":"e:D61甘","qty":1000.0,"impact":15012450.0,"detail":[{"cat":"主基板","board":"三球","before":0.0,"after":0.0,"delta":0.0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":1467449.9999999998},{"cat":"液晶制御(D)","board":"D2101A","before":743.0,"after":8513.29,"delta":7770.290000000001,"impact":7770290.000000001},{"cat":"演出基板(E)","board":"E2101B","before":700.0,"after":5464.82,"delta":4764.82,"impact":4764820.0},{"cat":"液晶IF基板(DE)","board":"DE2101A1","before":297.0,"after":1306.89,"delta":1009.8900000000001,"impact":1009890.0000000001}]},{"name":"e:A87ｻﾌﾞ","qty":5000.0,"impact":13537300.0,"detail":[{"cat":"主基板","board":"M2503A","before":686.0,"after":1100.52,"delta":414.52,"impact":2072600.0},{"cat":"払出基板","board":"C2501C","before":919.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"SNB5163A-00","before":5080.0,"after":null,"delta":0,"impact":0.0},{"cat":"演出基板(E)","board":"E2501B","before":620.0,"after":2912.94,"delta":2292.94,"impact":11464700.0},{"cat":"液晶IF基板(DE)","board":"なし","before":0.0,"after":0.0,"delta":0.0,"impact":0.0}]},{"name":"L:E63","qty":8000.0,"impact":12169919.999999998,"detail":[{"cat":"主基板","board":"M2402A","before":874.0,"after":2395.24,"delta":1521.2399999999998,"impact":12169919.999999998},{"cat":"払出基板","board":"C2502A","before":566.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"D1401C","before":null,"after":null,"delta":0,"impact":0.0},{"cat":"演出基板(E)","board":"E2102B","before":858.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"DE1802A","before":280.0,"after":null,"delta":0,"impact":0.0}]},{"name":"e:A87","qty":20000.0,"impact":8290400.0,"detail":[{"cat":"主基板","board":"M2503A","before":686.0,"after":1100.52,"delta":414.52,"impact":8290400.0},{"cat":"払出基板","board":"C2501C","before":919.0,"after":null,"delta":0,"impact":0.0},{"cat":"液晶制御(D)","board":"SNB5163A-00","before":5080.0,"after":null,"delta":0,"impact":0.0},{"cat":"演出基板(E)","board":"E2501B","before":2912.94,"after":null,"delta":0,"impact":0.0},{"cat":"液晶IF基板(DE)","board":"なし","before":0.0,"after":0.0,"delta":0.0,"impact":0.0}]},{"name":"e:D60甘","qty":2000.0,"impact":7988100.0,"detail":[{"cat":"主基板","board":"M2401A","before":838.0,"after":null,"delta":0,"impact":0.0},{"cat":"払出基板","board":"C2401A","before":1064.0,"after":2531.45,"delta":1467.4499999999998,"impact":2934899.9999999995},{"cat":"液晶制御(D)","board":"SNB5163A-00","before":5080.0,"after":null,"delta":0,"impact":0.0},{"cat":"演出基板(E)","board":"E2301B","before":661.0,"after":3187.6,"delta":2526.6,"impact":5053200.0},{"cat":"液晶IF基板(DE)","board":"なし","before":0.0,"after":0.0,"delta":0.0,"impact":0.0}]}],"parts_by_board":{"C2501C":[{"part_code":"1P1308931E80178SCF","part_name":"CN 8931E-080-178S-C-F","unit_cost_up":68,"qty_per_board":1,"board_cost_up":68},{"part_code":"1P130-FAS11-028-4","part_name":"FAS11-028-4","unit_cost_up":31,"qty_per_board":1,"board_cost_up":31}],"D2101A":[{"part_code":"1P1308930E040MSFET","part_name":"8930E-040MS-F-E-T","unit_cost_up":22,"qty_per_board":2,"board_cost_up":44}],"D2101A1":[{"part_code":"1P1308930E040MSFET","part_name":"8930E-040MS-F-E-T","unit_cost_up":22,"qty_per_board":2,"board_cost_up":44}],"E2101B":[],"E2301B":[],"E2501B":[],"M2401A":[],"M2402A":[{"part_code":"1P1308931E80178SCF","part_name":"CN 8931E-080-178S-C-F","unit_cost_up":68,"qty_per_board":6,"board_cost_up":408}],"M2503A":[]}};
+
+function _yen(n){return "¥"+Math.round(n).toLocaleString("ja-JP");}
+function _yenSigned(n){return (n<0?"-":"")+"¥"+Math.round(Math.abs(n)).toLocaleString("ja-JP");}
+
+function renderPriceImpact(){
+  const d=PRICE_IMPACT_DATA;
+  const boardEntries=Object.entries(d.board_totals).sort((a,b)=>b[1]-a[1]);
+  const maxBoard=boardEntries[0];
+  const nonzeroMachines=d.machines.filter(m=>m.impact!==0).length;
+
+  const boardRowsHtml=boardEntries.map(([board,amount])=>{
+    const pct=(100*amount/maxBoard[1]).toFixed(1);
+    const parts=d.parts_by_board[board]||[];
+    const partsHtml=parts.length
+      ? `<table style="width:100%;border-collapse:collapse;font-size:11.5px;margin-top:6px;">
+          <thead><tr>
+            <th style="text-align:left;padding:4px 8px;color:var(--text-sub);font-weight:700;">判明している値上げ部品</th>
+            <th style="text-align:right;padding:4px 8px;color:var(--text-sub);font-weight:700;">単価UP額</th>
+            <th style="text-align:right;padding:4px 8px;color:var(--text-sub);font-weight:700;">使用数/台</th>
+            <th style="text-align:right;padding:4px 8px;color:var(--text-sub);font-weight:700;">基板原価への寄与</th>
+          </tr></thead>
+          <tbody>${parts.map(p=>`<tr>
+            <td style="padding:4px 8px;border-top:1px dashed var(--border-light);">${_esc(p.part_name)}<br><span style="color:var(--text-muted);font-size:10.5px;">${_esc(p.part_code)}</span></td>
+            <td style="padding:4px 8px;border-top:1px dashed var(--border-light);text-align:right;font-family:'IBM Plex Mono',monospace;">${_yenSigned(p.unit_cost_up)}</td>
+            <td style="padding:4px 8px;border-top:1px dashed var(--border-light);text-align:right;font-family:'IBM Plex Mono',monospace;">${p.qty_per_board}</td>
+            <td style="padding:4px 8px;border-top:1px dashed var(--border-light);text-align:right;font-family:'IBM Plex Mono',monospace;">${_yenSigned(p.board_cost_up)}</td>
+          </tr>`).join('')}</tbody></table>`
+      : `<div style="color:var(--text-muted);font-size:11px;padding:6px 0;">この基板に紐づく値上げ部品はまだ「基板【改定前】202606〜」シートに入力されていません（マスタ表の単価差額のみで、根拠となる部品明細は未確認）。</div>`;
+    return _treeBranch(
+      `<span style="font-family:'IBM Plex Mono',monospace;font-weight:700;">${_esc(board)}</span>
+       <span style="display:inline-block;width:160px;height:10px;background:var(--border-light);border-radius:5px;overflow:hidden;vertical-align:middle;margin:0 10px;position:relative;top:-1px;">
+         <span style="display:block;height:100%;width:${pct}%;background:linear-gradient(90deg,var(--primary),var(--danger));"></span>
+       </span>
+       <span style="font-family:'IBM Plex Mono',monospace;font-weight:700;">${_yen(amount)}</span>`,
+      partsHtml, false);
+  }).join('');
+
+  const machineRowsHtml=[...d.machines].sort((a,b)=>b.impact-a.impact)
+    .filter(m=>m.impact!==0)
+    .map((m,i)=>{
+      const top=[...m.detail].sort((a,b)=>b.impact-a.impact)[0];
+      return `<tr>
+        <td style="color:var(--text-muted);font-family:'IBM Plex Mono',monospace;">${i+1}</td>
+        <td><strong>${_esc(m.name)}</strong></td>
+        <td style="text-align:right;font-family:'IBM Plex Mono',monospace;">${Math.round(m.qty).toLocaleString("ja-JP")}</td>
+        <td style="text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--danger);font-weight:700;">${_yen(m.impact)}
+          <span style="display:inline-block;font-size:10px;background:var(--bg);border:1px solid var(--border-light);border-radius:4px;padding:0 5px;margin-left:6px;">${(100*m.impact/d.grand_total).toFixed(1)}%</span>
+        </td>
+        <td style="font-size:11px;color:var(--text-sub);">${top?`${_esc(top.board)}（${_esc(top.cat)}）`:'—'}</td>
+      </tr>`;
+    }).join('');
+
+  document.getElementById('page-priceimpact').innerHTML=`
+    <div class="page-heading"><div><h2>📉 値上げインパクト</h2><p>部品の原価改定が基板・機種を経由して利益をどこまで削るかを追跡します（基板【改定前】202606〜シート ＋ 機種別・基板マスタ表 より算出）。</p></div></div>
+
+    <div class="summary-grid">
+      <div class="summary-card"><div class="lbl">全機種・合計コスト増加額(概算)</div><div class="val c-red">${_yen(d.grand_total)}</div><div class="sub">販売台数 × 基板単価改定前後差額の合計</div></div>
+      <div class="summary-card"><div class="lbl">影響を受ける機種数</div><div class="val c-blue">${nonzeroMachines}<span style="font-size:13px;color:var(--text-sub);font-weight:500;"> / ${d.machines.length}</span></div><div class="sub">基板コード経由で影響が及ぶ機種</div></div>
+      <div class="summary-card"><div class="lbl">最大インパクト基板</div><div class="val c-yellow">${_esc(maxBoard[0])}</div><div class="sub">全体の${(100*maxBoard[1]/d.grand_total).toFixed(1)}%（${_yen(maxBoard[1])}）</div></div>
+    </div>
+
+    <div class="alert-bar" style="background:#fffbeb;border-color:#fcd34d;color:#92400e;">
+      ⚠️ 要確認: D2101A基板の単価がマスタ表で ¥743→¥8,513.29（約11.5倍）となっており、全体影響額の約65%を占めます。一方「基板【改定前】202606〜」シートで確認できる値上げ部品は1台あたり¥44分のみで、11.5倍を裏付ける根拠が見当たりません。マスタ表側のセル参照が壊れている可能性があるため、D2101Aの改定後単価セルを直接ご確認ください。
+    </div>
+
+    <div class="page-heading" style="margin-top:24px;"><div><h3 style="margin:0;font-size:14px;">基板別インパクト</h3><p>クリックすると、判明している値上げ部品の内訳を表示します。</p></div></div>
+    <div class="table-wrap"><div style="padding:14px;">${boardRowsHtml}</div></div>
+
+    <div class="page-heading" style="margin-top:24px;"><div><h3 style="margin:0;font-size:14px;">機種別インパクト・ランキング</h3><p>影響額が大きい機種順。主基板・払出基板・液晶制御(D)・演出基板(E)・液晶IF基板(DE)の5区分を合算。</p></div></div>
+    <div class="table-wrap"><div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;min-width:560px;">
+      <thead><tr><th>#</th><th>機種</th><th style="text-align:right;">販売台数</th><th style="text-align:right;">影響額(円)</th><th>主な要因基板</th></tr></thead>
+      <tbody>${machineRowsHtml}</tbody>
+    </table></div></div>
+  `;
+}
+
 function renderPage(page){
   if(page==='dashboard')renderDashboard();
   else if(page==='schedule')renderSchedule();
@@ -1164,6 +1248,7 @@ function renderPage(page){
   else if(page==='future')renderFuturePage();
   else if(page==='parts')renderParts();
   else if(page==='boards')renderBoards();
+  else if(page==='priceimpact')renderPriceImpact();
 }
 
 /* ============================================================
@@ -1242,20 +1327,32 @@ function _init(saved){
       if(_diagEl)_diagEl.style.background='#7f1d1d';
     }
   }
-  _diag('起動: typeof google='+(typeof google)+' google.script='+(typeof google!=='undefined'?!!google.script:'n/a'));
-  if(typeof google!=='undefined'&&google.script){
-    _diag('google.script.run.loadData() 呼び出し中...(応答なければ5秒後にフォールバック)');
-    var _timeoutId=setTimeout(function(){
-      _diag('⚠️ 5秒応答なし。google.script.run(RPC通信)がブロックされている可能性。空データで初期化します。');
-      _safeInit(null,'timeout-fallback');
-    },5000);
-    google.script.run
-      .withSuccessHandler(function(saved){clearTimeout(_timeoutId);_diag('loadData成功、データ件数OK');_safeInit(saved,'success');})
-      .withFailureHandler(function(err){clearTimeout(_timeoutId);_diag('loadData失敗: '+(err&&err.message));_safeInit(null,'failure');})
-      .loadData();
+  function _startLoad(){
+    _diag('起動: typeof google='+(typeof google)+' google.script='+(typeof google!=='undefined'?!!google.script:'n/a'));
+    if(typeof google!=='undefined'&&google.script){
+      _diag('google.script.run.loadData() 呼び出し中...(応答なければ8秒後にフォールバック)');
+      var _timeoutId=setTimeout(function(){
+        _diag('⚠️ 8秒応答なし。google.script.run(RPC通信)がブロックされている可能性。空データで初期化します。');
+        _safeInit(null,'timeout-fallback');
+      },8000);
+      google.script.run
+        .withSuccessHandler(function(saved){clearTimeout(_timeoutId);_diag('loadData成功、データ件数OK');_safeInit(saved,'success');})
+        .withFailureHandler(function(err){clearTimeout(_timeoutId);_diag('loadData失敗: '+(err&&err.message));_safeInit(null,'failure');})
+        .loadData();
+    }else{
+      _diag('google.scriptが存在しないため空データで初期化');
+      _safeInit(null,'no-google-script');
+    }
+  }
+  // GASのサンドボックスiframeは window の load イベント発火時点で
+  // postMessage通信基盤の初期化が完了している。スクリプト実行直後の
+  // 即時呼び出しではこの基盤がまだ準備できておらず、google.script.run
+  // が応答しない(postMessageが破棄される)ことがあるため、load後まで待つ。
+  _diag('window.load待機中... (document.readyState='+document.readyState+')');
+  if(document.readyState==='complete'){
+    setTimeout(_startLoad,0);
   }else{
-    _diag('google.scriptが存在しないため空データで初期化');
-    _safeInit(null,'no-google-script');
+    window.addEventListener('load',_startLoad);
   }
 })();
 
