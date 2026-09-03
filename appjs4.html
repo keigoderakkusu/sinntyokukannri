@@ -964,7 +964,7 @@ function _photoBlock(photo,uploadHandlerAttr){
       </div>
       <label class="btn btn-sm" style="display:block;text-align:center;margin-top:6px;cursor:pointer;">
         📷 写真を${photo?'変更':'追加'}
-        <input type="file" accept="image/*" style="display:none;" ${uploadHandlerAttr}>
+        ${'<input type="file" accept="image/'+'*" style="display:none;" '+uploadHandlerAttr+'>'}
       </label>
     </div>`;
 }
