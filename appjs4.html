@@ -1312,7 +1312,7 @@ function _init(saved){
   var _diagEl=document.getElementById('diag-panel');
   function _diag(msg){
     console.log('[diag] '+msg);
-    if(_diagEl){_diagEl.style.display='block';_diagEl.textContent+=new Date().toISOString().slice(11,19)+' '+msg+'\n';}
+    if(_diagEl){_diagEl.textContent+=new Date().toISOString().slice(11,19)+' '+msg+'\n';}
   }
   var _initCalled=false;
   function _safeInit(saved,label){
